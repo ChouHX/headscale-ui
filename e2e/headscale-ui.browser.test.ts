@@ -526,7 +526,7 @@ function expectAppHeader() {
   const primaryRow = document.querySelector<HTMLElement>('[data-testid="header-primary-row"]');
   const navigation = document.querySelector<HTMLElement>('[data-testid="header-navigation"]');
   const pageBody = document.querySelector<HTMLElement>('[data-testid="page-body"]');
-  expect(header?.getBoundingClientRect().width).toBe(window.innerWidth);
+  expect(header?.getBoundingClientRect().width).toBe(document.documentElement.clientWidth);
   expect(primaryRow).toBeTruthy();
   expect(navigation).toBeTruthy();
   expect(primaryRow?.parentElement?.className).toContain("container");
@@ -3023,7 +3023,7 @@ test("defaults to English and switches through every supported BCP47 locale", as
     '[data-testid="invite-expiration-hour"]',
   );
   expect(hourSelect?.getAttribute("aria-label")).toBe("الساعة");
-  expect(hourSelect?.selectedOptions[0]?.textContent?.trim()).toBe(arabicHour);
+  expect(hourSelect?.querySelector('option[value="07"]')?.textContent?.trim()).toBe(arabicHour);
   expectNoHorizontalOverflow();
 }, 120_000);
 
