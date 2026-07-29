@@ -337,16 +337,16 @@ async function copyInviteKey(value: string) {
                 <button
                   v-if="hasVisibleUser(key.user)"
                   type="button"
-                  class="text-left underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  class="text-start underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   :data-testid="`invite-owner-link-${key.id}`"
                   @click="openUserDetails(key.user)"
                 >
-                  {{ userLabel(key.user) }}
+                  <bdi dir="auto">{{ userLabel(key.user) }}</bdi>
                 </button>
-                <span v-else>{{ userLabel(key.user) }}</span>
+                <bdi v-else dir="auto">{{ userLabel(key.user) }}</bdi>
               </TableCell>
               <TableCell class="min-w-64">
-                <code class="break-all rounded bg-secondary px-1.5 py-0.5 text-xs">{{ key.key }}</code>
+                <code dir="ltr" class="break-all rounded bg-secondary px-1.5 py-0.5 text-xs">{{ key.key }}</code>
                 <div class="mt-1 flex flex-wrap gap-1">
                   <Badge variant="outline" :class="keyKindClass(key)" :data-testid="`invite-kind-${key.id}`">{{ key.reusable ? copy.reusable : copy.oneTimeKey }}</Badge>
                   <Badge v-if="key.ephemeral" variant="outline" :class="keyEphemeralClass()" :data-testid="`invite-ephemeral-${key.id}`">{{ copy.ephemeral }}</Badge>

@@ -8,6 +8,8 @@ describe("auth key date-time helpers", () => {
   });
 
   test("returns an empty local date-time value for invalid timestamps", () => {
+    expect(isoToDateTimeLocal("")).toBe("");
     expect(isoToDateTimeLocal("not-a-date")).toBe("");
+    expect(dateTimeLocalToIso("not-a-date")).toBe("not-a-date");
   });
 });

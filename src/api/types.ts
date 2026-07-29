@@ -92,9 +92,6 @@ export interface HeadscaleClient {
   listNodes(payload: OperationPayload): Promise<{ nodes: HeadscaleNode[] }>;
   getNode(payload: OperationPayload): Promise<{ node: HeadscaleNode }>;
   registerNode(payload: OperationPayload): Promise<{ node: HeadscaleNode }>;
-  authRegister(payload: OperationPayload): Promise<{ node: HeadscaleNode }>;
-  authApprove(payload: OperationPayload): Promise<Record<string, never>>;
-  authReject(payload: OperationPayload): Promise<Record<string, never>>;
   debugCreateNode(payload: OperationPayload): Promise<{ node: HeadscaleNode }>;
   renameNode(payload: OperationPayload): Promise<{ node: HeadscaleNode }>;
   expireNode(payload: OperationPayload): Promise<{ node: HeadscaleNode }>;

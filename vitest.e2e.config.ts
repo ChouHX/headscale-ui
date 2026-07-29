@@ -1,9 +1,11 @@
+import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
 import { webdriverio } from "@vitest/browser-webdriverio";
 import { defineConfig } from "vitest/config";
 
 const resizeObserverLoopMessage = "ResizeObserver loop completed with undelivered notifications.";
+const headscaleE2eUrl = process.env.HEADSCALE_E2E_URL;
 
 // Chrome emits this as an ErrorEvent with no `error`; Vitest Browser then forwards
 // it through Vite as noisy test output, not as an application failure.
@@ -29,9 +31,20 @@ function suppressKnownResizeObserverNoise() {
 
 export default defineConfig({
   plugins: [suppressKnownResizeObserverNoise(), vue(), tailwindcss()],
+  server: headscaleE2eUrl
+    ? {
+        proxy: {
+          "/__headscale-e2e": {
+            target: headscaleE2eUrl,
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/__headscale-e2e/, ""),
+          },
+        },
+      }
+    : undefined,
   resolve: {
     alias: {
-      "@": new URL("./src", import.meta.url).pathname,
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
   test: {

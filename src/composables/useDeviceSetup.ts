@@ -7,7 +7,6 @@ type AddDeviceStep = "type" | "preferences" | "authKey" | "generate" | "pending"
 interface PendingRegistrationForm {
   user: string;
   key: string;
-  authId: string;
 }
 
 interface UseDeviceSetupReturn {
@@ -18,15 +17,13 @@ interface UseDeviceSetupReturn {
   returnAfterInvite: Ref<boolean>;
   lastCreatedInvite: Ref<string>;
   lastRegisteredNode: Ref<HeadscaleNode | null>;
-  authRequestResult: Ref<string>;
   pendingRegistrationForm: PendingRegistrationForm;
 }
 
 function defaultPendingRegistrationForm(): PendingRegistrationForm {
   return {
-    user: "1",
+    user: "",
     key: "nodekey:pending-demo",
-    authId: "auth-demo",
   };
 }
 
@@ -49,7 +46,6 @@ export function useDeviceSetup(): UseDeviceSetupReturn {
   const returnAfterInvite = ref(false);
   const lastCreatedInvite = ref("");
   const lastRegisteredNode = ref<HeadscaleNode | null>(null);
-  const authRequestResult = ref("");
   const pendingRegistrationForm = reactive<PendingRegistrationForm>(
     defaultPendingRegistrationForm(),
   );
@@ -62,7 +58,6 @@ export function useDeviceSetup(): UseDeviceSetupReturn {
     returnAfterInvite,
     lastCreatedInvite,
     lastRegisteredNode,
-    authRequestResult,
     pendingRegistrationForm,
   };
   return instance;

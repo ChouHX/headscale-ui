@@ -1,0 +1,31 @@
+{
+  "groups": {
+    "group:test-01": ["admin-test@", "deleted-test@"],
+    "group:test-02": ["admin-test@"],
+    "group:test-03": ["admin-test@"],
+    "group:test-04": ["admin-test@"],
+    "group:test-05": ["admin-test@"],
+    "group:test-06": ["admin-test@"],
+    "group:test-07": ["admin-test@"],
+    "group:test-08": ["admin-test@"],
+    "group:test-09": ["admin-test@"],
+    "group:test-10": ["admin-test@", "team-test@"]
+  },
+  "tagOwners": {
+    "tag:test-01": ["admin-test@", "deleted-test@"],
+    "tag:test-02": ["admin-test@"],
+    "tag:test-03": ["admin-test@"],
+    "tag:test-04": ["admin-test@"],
+    "tag:test-05": ["admin-test@"]
+  },
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["group:test-01", "team-test@"],
+      "dst": ["tag:test-01:80", "tag:test-02:22"]
+    }
+  ],
+  "hosts": {
+    "test-router": "100.64.0.1"
+  }
+}

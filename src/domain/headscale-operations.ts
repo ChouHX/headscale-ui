@@ -3,7 +3,6 @@ export type OperationGroup =
   | "users"
   | "preauthkeys"
   | "nodes"
-  | "auth"
   | "routes"
   | "apikeys"
   | "policy";
@@ -189,7 +188,7 @@ export const HEADSCALE_OPERATIONS = [
     path: "/api/v1/node/register",
     coverage: "rest-api",
     fields: [
-      { name: "user", label: "User ID/name", type: "text", defaultValue: "1" },
+      { name: "user", label: "Username", type: "text", defaultValue: "alice" },
       {
         name: "key",
         label: "Registration Key",
@@ -197,39 +196,6 @@ export const HEADSCALE_OPERATIONS = [
         defaultValue: "nodekey:pending-demo",
       },
     ],
-  },
-  {
-    id: "auth.register",
-    group: "auth",
-    title: "Register auth request",
-    description: "Assign a browser-auth registration request to a user.",
-    method: "POST",
-    path: "/api/v1/auth/register",
-    coverage: "rest-api",
-    fields: [
-      { name: "user", label: "User ID/name", type: "text", defaultValue: "1" },
-      { name: "authId", label: "Auth ID", type: "text", defaultValue: "auth-demo" },
-    ],
-  },
-  {
-    id: "auth.approve",
-    group: "auth",
-    title: "Approve auth request",
-    description: "Approve a browser-auth registration request by auth ID.",
-    method: "POST",
-    path: "/api/v1/auth/approve",
-    coverage: "rest-api",
-    fields: [{ name: "authId", label: "Auth ID", type: "text", defaultValue: "auth-demo" }],
-  },
-  {
-    id: "auth.reject",
-    group: "auth",
-    title: "Reject auth request",
-    description: "Reject a browser-auth registration request by auth ID.",
-    method: "POST",
-    path: "/api/v1/auth/reject",
-    coverage: "rest-api",
-    fields: [{ name: "authId", label: "Auth ID", type: "text", defaultValue: "auth-demo" }],
   },
   {
     id: "node.debugCreate",
@@ -240,7 +206,7 @@ export const HEADSCALE_OPERATIONS = [
     path: "/api/v1/debug/node",
     coverage: "rest-api",
     fields: [
-      { name: "user", label: "User", type: "text", defaultValue: "1" },
+      { name: "user", label: "Username", type: "text", defaultValue: "alice" },
       { name: "key", label: "Node key", type: "text", defaultValue: "nodekey:debug-demo" },
       { name: "name", label: "Node name", type: "text", defaultValue: "debug-router" },
       { name: "routes", label: "Advertised routes", type: "list", defaultValue: "10.10.0.0/16" },
@@ -381,14 +347,11 @@ export const HEADSCALE_OPERATIONS = [
     id: "apikey.delete",
     group: "apikeys",
     title: "Delete API key",
-    description: "Delete an API key by prefix and optional ID.",
+    description: "Delete an API key by prefix.",
     method: "DELETE",
     path: "/api/v1/apikey/{prefix}",
     coverage: "rest-api",
-    fields: [
-      { name: "prefix", label: "Prefix", type: "text", defaultValue: "ak_old_demo" },
-      { name: "id", label: "ID", type: "text", defaultValue: "2" },
-    ],
+    fields: [{ name: "prefix", label: "Prefix", type: "text", defaultValue: "ak_old_demo" }],
   },
   {
     id: "policy.get",
@@ -415,11 +378,3 @@ export const HEADSCALE_OPERATIONS = [
 export type OperationId = (typeof HEADSCALE_OPERATIONS)[number]["id"];
 
 export const OPERATION_IDS = HEADSCALE_OPERATIONS.map((operation) => operation.id);
-
-export function getOperationsByGroup(group: OperationGroup) {
-  return HEADSCALE_OPERATIONS.filter((operation) => operation.group === group);
-}
-
-export function getOperation(id: OperationId) {
-  return HEADSCALE_OPERATIONS.find((operation) => operation.id === id);
-}

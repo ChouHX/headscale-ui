@@ -24,11 +24,12 @@ describe("toPrincipal", () => {
 });
 
 describe("PrincipalIndex", () => {
-  test("matches across case and whitespace variants", () => {
+  test("trims whitespace but keeps Headscale's case-sensitive matching", () => {
     const index = new PrincipalIndex(["Alice@Example.COM", "  bob  "]);
-    expect(index.has("alice@example.com")).toBe(true);
-    expect(index.has(" Alice@example.com ")).toBe(true);
-    expect(index.has("BOB")).toBe(true);
+    expect(index.has("alice@example.com")).toBe(false);
+    expect(index.has(" Alice@Example.COM ")).toBe(true);
+    expect(index.has("BOB")).toBe(false);
+    expect(index.has(" bob ")).toBe(true);
     expect(index.has("carol")).toBe(false);
   });
 
@@ -44,10 +45,48 @@ describe("PrincipalIndex", () => {
       makeUser({ email: "", name: "bob" }),
       makeUser({ email: "carol@example.com", name: "" }),
     ]);
-    expect(index.has("ALICE@example.com")).toBe(true);
+    expect(index.has("ALICE@example.com")).toBe(false);
+    expect(index.has("alice@example.com")).toBe(true);
     expect(index.has("alice")).toBe(true);
-    expect(index.has("BOB")).toBe(true);
+    expect(index.has("BOB")).toBe(false);
+    expect(index.has("bob@")).toBe(true);
     expect(index.has("carol@example.com")).toBe(true);
     expect(index.has("nobody")).toBe(false);
+  });
+
+  test("fromUsers recognizes email, name, and name@ aliases", () => {
+    const index = PrincipalIndex.fromUsers([
+      makeUser({ email: " Alice@Example.COM ", name: " Alice " }),
+      makeUser({ email: "", name: " corp " }),
+    ]);
+
+    expect(index.has("Alice@Example.COM")).toBe(true);
+    expect(index.has("Alice@Example.COM@")).toBe(true);
+    expect(index.has(" Alice ")).toBe(true);
+    expect(index.has(" Alice@ ")).toBe(true);
+    expect(index.has("alice@example.com")).toBe(false);
+    expect(index.has("CORP@")).toBe(false);
+    expect(index.has("corp@")).toBe(true);
+    expect(index.has("corp@@")).toBe(false);
+    expect(index.has("ghost@")).toBe(false);
+  });
+
+  test("fromUsers mirrors Headscale v0.28 suffix resolution and exact provider identifiers", () => {
+    const index = PrincipalIndex.fromUsers([
+      makeUser({
+        email: "alice@example.com",
+        name: "alice@idp.example",
+        providerId: "https://idp.example/Subject",
+      }),
+      makeUser({ name: "bob", providerId: "urn:bob@idp" }),
+    ]);
+
+    expect(index.has("alice@idp.example")).toBe(true);
+    expect(index.has("alice@idp.example@")).toBe(true);
+    expect(index.has("alice@example.com@")).toBe(true);
+    expect(index.has("https://idp.example/Subject@")).toBe(true);
+    expect(index.has("https://idp.example/subject@")).toBe(false);
+    expect(index.has("urn:bob@idp")).toBe(true);
+    expect(index.has("urn:bob@idp@")).toBe(true);
   });
 });

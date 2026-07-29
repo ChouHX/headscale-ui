@@ -1,0 +1,13 @@
+regions:
+  900:
+    regionid: 900
+    regioncode: test
+    regionname: Test DERP
+    nodes:
+      - name: test-derp
+        regionid: 900
+        hostname: derp.example.test
+        ipv4: 192.0.2.1
+        stunport: 0
+        stunonly: false
+        derpport: 0

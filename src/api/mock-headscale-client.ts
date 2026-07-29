@@ -176,7 +176,11 @@ export function createInitialSnapshot(): HeadscaleSnapshot {
 }
 
 export class MockHeadscaleClient implements HeadscaleClient {
-  readonly snapshot = createInitialSnapshot();
+  readonly snapshot: HeadscaleSnapshot;
+
+  constructor() {
+    this.snapshot = createInitialSnapshot();
+  }
 
   async health() {
     recordOperationCall("health.check", "GET", "/api/v1/health", {});
@@ -312,26 +316,6 @@ export class MockHeadscaleClient implements HeadscaleClient {
     return { node };
   }
 
-  async authRegister(payload: OperationPayload) {
-    recordOperationCall("auth.register", "POST", "/api/v1/auth/register", payload);
-    const user = this.findUser(stringValue(payload, "user")) ?? this.snapshot.users[0];
-    const authId = stringValue(payload, "authId") || "auth-request";
-    const node = this.createNode(user, `auth-${authId}`);
-    node.registerMethod = "auth";
-    this.snapshot.nodes.push(node);
-    return { node };
-  }
-
-  async authApprove(payload: OperationPayload) {
-    recordOperationCall("auth.approve", "POST", "/api/v1/auth/approve", payload);
-    return {};
-  }
-
-  async authReject(payload: OperationPayload) {
-    recordOperationCall("auth.reject", "POST", "/api/v1/auth/reject", payload);
-    return {};
-  }
-
   async debugCreateNode(payload: OperationPayload) {
     recordOperationCall("node.debugCreate", "POST", "/api/v1/debug/node", payload);
     const user = this.findUser(stringValue(payload, "user")) ?? this.snapshot.users[0];
@@ -345,8 +329,7 @@ export class MockHeadscaleClient implements HeadscaleClient {
   async renameNode(payload: OperationPayload) {
     recordOperationCall("node.rename", "POST", "/api/v1/node/{node_id}/rename/{new_name}", payload);
     const node = this.findNode(payload);
-    node.name = stringValue(payload, "newName");
-    node.givenName = node.name;
+    node.givenName = stringValue(payload, "newName");
     return { node };
   }
 
@@ -413,8 +396,12 @@ export class MockHeadscaleClient implements HeadscaleClient {
   }
 
   async expireApiKey(payload: OperationPayload) {
-    recordOperationCall("apikey.expire", "POST", "/api/v1/apikey/expire", payload);
-    const key = this.findApiKey(payload);
+    const prefix = stringValue(payload, "prefix");
+    const id = stringValue(payload, "id");
+    if (!prefix && !id) throw new Error("API key prefix or ID is required");
+    const identifier = prefix ? { prefix } : { id };
+    recordOperationCall("apikey.expire", "POST", "/api/v1/apikey/expire", identifier);
+    const key = this.findApiKey(identifier);
     if (key) {
       key.expiration = nowIso();
     }
@@ -422,12 +409,10 @@ export class MockHeadscaleClient implements HeadscaleClient {
   }
 
   async deleteApiKey(payload: OperationPayload) {
-    recordOperationCall("apikey.delete", "DELETE", "/api/v1/apikey/{prefix}", payload);
     const prefix = stringValue(payload, "prefix");
-    const id = stringValue(payload, "id");
-    this.snapshot.apiKeys = this.snapshot.apiKeys.filter(
-      (key) => key.prefix !== prefix && (!id || key.id !== id),
-    );
+    if (!prefix) throw new Error("API key prefix is required");
+    recordOperationCall("apikey.delete", "DELETE", "/api/v1/apikey/{prefix}", { prefix });
+    this.snapshot.apiKeys = this.snapshot.apiKeys.filter((key) => key.prefix !== prefix);
     return {};
   }
 

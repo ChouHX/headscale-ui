@@ -19,7 +19,7 @@ const {
   isRefreshing: isRefreshingSnapshot,
   refreshSnapshot,
 } = useSnapshot();
-const { nodeOwner, nodeStatusLabel, hasVisibleUser } = useDisplayHelpers();
+const { nodeDisplayName, nodeOwner, nodeStatusLabel, hasVisibleUser } = useDisplayHelpers();
 
 const routesWaiting = computed(() =>
   snapshot.value.nodes.reduce((total, node) => {
@@ -93,7 +93,7 @@ const visibleUsers = computed(() => snapshot.value.users.filter((user) => hasVis
         <Card v-for="node in snapshot.nodes.slice(0, 4)" :key="node.id" class="p-3">
           <div class="flex items-start justify-between gap-3">
             <div>
-              <p class="font-medium">{{ node.name }}</p>
+              <p class="font-medium">{{ nodeDisplayName(node) }}</p>
               <p v-if="hasVisibleUser(node.user)" class="text-sm text-muted-foreground">
                 {{ nodeOwner(node) }}
               </p>

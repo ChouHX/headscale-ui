@@ -84,8 +84,9 @@ import {
 } from "@/domain/policy-views";
 import { PrincipalIndex, toPrincipal } from "@/domain/principal";
 import { useHeadscaleI18n } from "@/i18n";
+import { type CountMessage, formatCount } from "@/i18n/plural";
 
-const { meta } = useHeadscaleI18n();
+const { locale, meta } = useHeadscaleI18n();
 const { copy } = useProductCopy();
 const { snapshot } = useSnapshot();
 const { isActionPending, actionError } = useActionFeedback();
@@ -253,13 +254,8 @@ function memberKindGroupLabel(kind: PolicyMemberKind): string {
   return copy.value.optionGroupSpecial;
 }
 
-function pluralize(
-  count: number,
-  oneKey: keyof typeof copy.value,
-  manyKey: keyof typeof copy.value,
-) {
-  const tpl = count === 1 ? copy.value[oneKey] : copy.value[manyKey];
-  return String(tpl).replace("{count}", String(count));
+function pluralize(count: number, key: CountMessage) {
+  return formatCount(locale.value, key, count);
 }
 
 const orphanValueSet = computed(() => new Set(orphanRefs.value.map((r) => r.value)));
@@ -311,7 +307,7 @@ function buildAccessOptions(taken: ReadonlySet<string>): MemberOption[] {
     opts.push({
       value: group.name,
       label: stripGroupPrefix(group.name),
-      description: pluralize(group.members.length, "oneMember", "nMembers"),
+      description: pluralize(group.members.length, "teamMembers"),
       group: copy.value.optionGroupTeams,
       groupOrder: 1,
     });
@@ -890,7 +886,7 @@ function cleanupOrphanRefs() {
       <div class="grid gap-0.5">
         <p class="font-medium">{{ copy.openAccessBannerTitle }}</p>
         <p class="text-xs">
-          {{ pluralize(openAccessWarnings.length, "openAccessBannerHintOne", "openAccessBannerHintMany") }}
+          {{ pluralize(openAccessWarnings.length, "openAccessWarnings") }}
         </p>
       </div>
     </div>
@@ -904,7 +900,7 @@ function cleanupOrphanRefs() {
       <div class="grid gap-0.5 flex-1">
         <p class="font-medium">{{ copy.orphanRefBannerTitle }}</p>
         <p class="text-xs">
-          {{ pluralize(orphanRefs.length, "orphanRefBannerHintOne", "orphanRefBannerHintMany") }}
+          {{ pluralize(orphanRefs.length, "orphanReferences") }}
         </p>
       </div>
       <Button
@@ -915,7 +911,7 @@ function cleanupOrphanRefs() {
         @click="cleanupOrphanRefsOpen = true"
       >
         <Eraser class="h-4 w-4" aria-hidden="true" />
-        {{ pluralize(orphanRefs.length, "cleanupOrphanRefsOne", "cleanupOrphanRefsMany") }}
+        {{ pluralize(orphanRefs.length, "cleanupOrphans") }}
       </Button>
     </div>
 
@@ -996,7 +992,7 @@ function cleanupOrphanRefs() {
             <div class="grid gap-0.5 min-w-0">
               <p class="font-medium break-all">{{ team.displayName }}</p>
               <p class="text-xs text-muted-foreground">
-                {{ pluralize(team.group.members.length, "oneMember", "nMembers") }}
+                {{ pluralize(team.group.members.length, "teamMembers") }}
               </p>
             </div>
             <Button
@@ -1077,7 +1073,7 @@ function cleanupOrphanRefs() {
               <div class="grid gap-0.5 min-w-0">
                 <p class="font-medium break-all">{{ t.displayName }}</p>
                 <p class="text-xs text-muted-foreground">
-                  {{ pluralize(t.deviceCount, "oneDeviceTagged", "nDevicesTagged") }}
+                  {{ pluralize(t.deviceCount, "devicesTagged") }}
                 </p>
               </div>
             </div>
@@ -1221,7 +1217,7 @@ function cleanupOrphanRefs() {
             {{ copy.tagDetailDialogSubtitle }}
           </DialogDescription>
           <p v-if="currentTagMeta" class="mt-1 text-xs text-muted-foreground">
-            {{ pluralize(currentTagMeta.deviceCount, "oneDeviceTagged", "nDevicesTagged") }}
+            {{ pluralize(currentTagMeta.deviceCount, "devicesTagged") }}
           </p>
         </DialogHeader>
 
@@ -1287,7 +1283,7 @@ function cleanupOrphanRefs() {
                     >
                       {{ isOrphanValue(a.who) ? copy.orphanReferenceBadge : whoDisplayKind(a.who) }}
                     </Badge>
-                    <span class="font-medium break-all">{{ whoDisplayLabel(a.who) }}</span>
+                    <bdi dir="auto" class="font-medium break-all">{{ whoDisplayLabel(a.who) }}</bdi>
                   </div>
                   <Button
                     type="button"
@@ -1510,7 +1506,7 @@ function cleanupOrphanRefs() {
                   >
                     {{ isOrphanValue(m.value) ? copy.orphanReferenceBadge : whoDisplayKind(m.value) }}
                   </Badge>
-                  <span class="font-medium break-all">{{ whoDisplayLabel(m.value) }}</span>
+                  <bdi dir="auto" class="font-medium break-all">{{ whoDisplayLabel(m.value) }}</bdi>
                 </div>
                 <Button
                   type="button"
@@ -1699,7 +1695,7 @@ function cleanupOrphanRefs() {
             data-testid="cleanup-orphans-confirm"
             @click="cleanupOrphanRefs"
           >
-            {{ pluralize(orphanRefs.length, "cleanupOrphanRefsOne", "cleanupOrphanRefsMany") }}
+            {{ pluralize(orphanRefs.length, "cleanupOrphans") }}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

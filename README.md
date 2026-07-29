@@ -27,8 +27,9 @@ auth keys, approve routes, and design access policy through guided controls.
 - Route review: subnet and exit-route approval with clear risk signals.
 - Access control designer: rules, groups, and tag ownership are edited through
   menus and form controls instead of raw JSON.
-- Internationalization with `vue-i18n`: English by default, plus Chinese,
-  French, Russian, Spanish, and Arabic with RTL document direction.
+- Internationalization with `vue-i18n`: `en-US`, `zh-Hans`, `zh-Hant-TW`,
+  `zh-Hant-HK`, `ja-JP`, `ko-KR`, `fr-FR`, `ru-RU`, `es-ES`, `it-IT`, and
+  Arabic (`ar`) with RTL document direction.
 - Theme support: light, dark, and system modes.
 - Mock mode for local development and real mode for a Headscale API server.
 
@@ -58,9 +59,10 @@ the server URL and an API key created by Headscale, then connect.
 bun run dev       # Start Vite dev server
 bun run build     # Type-check and build production assets
 bun run lint      # Run Biome checks
-bun run test      # Run Bun unit tests
-bun run test:e2e  # Run Vitest Browser E2E tests
-bun run check     # Lint, unit test, build, and E2E
+bun run test           # Run Bun unit tests
+bun run test:coverage  # Require 100% function and line coverage for business modules
+bun run test:e2e       # Run browser E2E against a Docker Headscale service
+bun run check          # Lint, covered unit tests, build, and Docker E2E
 ```
 
 The project intentionally avoids Node.js scripts. Use Bun for installation,
@@ -91,5 +93,6 @@ Before shipping a change, run:
 bun run check
 ```
 
-This covers Biome, Bun unit tests, TypeScript production build, and Vitest
-Browser E2E tests.
+This covers Biome, the business-unit coverage gate, the TypeScript production
+build, and browser E2E against a disposable Docker Headscale service. Docker
+Compose must be available for the E2E suite.

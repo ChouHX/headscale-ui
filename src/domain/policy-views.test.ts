@@ -13,6 +13,7 @@ import {
   getGroupAccess,
   getIpRules,
   getOpenAccessWarnings,
+  getServicePresets,
   getTagAccessors,
   listTagsFromState,
   parsePortsToServices,
@@ -25,6 +26,16 @@ import {
   withGroupPrefix,
   withTagPrefix,
 } from "./policy-views";
+
+test("service presets expose the supported built-in port groups", () => {
+  expect(getServicePresets()).toEqual([
+    { id: "all", ports: ["*"] },
+    { id: "ssh", ports: ["22"] },
+    { id: "web", ports: ["80", "443"] },
+    { id: "rdp", ports: ["3389"] },
+    { id: "dns", ports: ["53"] },
+  ]);
+});
 
 describe("parsePortsToServices", () => {
   test("identifies SSH preset", () => {
@@ -195,6 +206,20 @@ describe("getGroupAccess", () => {
     const state = emptyState();
     expect(getGroupAccess(state, "group:nobody")).toEqual([]);
   });
+
+  test("merges services and custom ports for repeated group-to-tag rules", () => {
+    let state = { ...emptyState(), rules: [] };
+    state = addRule(state, createRule("group:testers", "tag:service", "22,8080"));
+    state = addRule(state, createRule("group:testers", "tag:service", "80,443,8443"));
+
+    expect(getGroupAccess(state, "group:testers")).toEqual([
+      {
+        tagName: "tag:service",
+        services: ["ssh", "web"],
+        customPorts: "8080,8443",
+      },
+    ]);
+  });
 });
 
 describe("setTagAccessor", () => {
@@ -268,6 +293,20 @@ describe("removeTagAccessor", () => {
 
     expect(state.rules).toHaveLength(1);
     expect(state.rules[0]?.destination).toBe("tag:db");
+  });
+
+  test("preserves a multi-source, multi-destination rule to avoid changing its cross-product", () => {
+    let state = { ...emptyState(), rules: [] };
+    const sharedRule = createRule(
+      "user@example.test,group:testers",
+      "tag:service,tag:database",
+      "22",
+    );
+    state = addRule(state, sharedRule);
+
+    const next = removeTagAccessor(state, "tag:service", "user@example.test");
+
+    expect(next.rules).toEqual([sharedRule]);
   });
 });
 

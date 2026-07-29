@@ -251,8 +251,8 @@ async function confirmApiKeyAction() {
 
   const completed = await mutate("api-key-action", (client) =>
     target.kind === "expire"
-      ? client.expireApiKey({ prefix: target.key.prefix, id: target.key.id })
-      : client.deleteApiKey({ prefix: target.key.prefix, id: target.key.id }),
+      ? client.expireApiKey({ prefix: target.key.prefix })
+      : client.deleteApiKey({ prefix: target.key.prefix }),
   );
   if (completed) {
     handleApiKeyActionDialogOpen(false);
@@ -540,7 +540,7 @@ watch(activeSection, scrollActiveTabIntoView, { immediate: true });
                   </div>
                   <div v-if="createdApiKey" class="grid gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300" data-testid="created-api-key">
                     <p class="text-sm font-semibold">{{ copy.createdApiKey }}</p>
-                    <code class="break-all rounded bg-background/70 px-2 py-1 text-xs text-foreground">{{ createdApiKey }}</code>
+                    <code dir="ltr" class="break-all rounded bg-background/70 px-2 py-1 text-xs text-foreground">{{ createdApiKey }}</code>
                     <p class="text-xs">{{ copy.apiKeyOnlyShownOnce }}</p>
                     <Button type="button" variant="outline" size="sm" class="w-fit" data-testid="copy-created-api-key" @click="copyKeyValue(createdApiKey)">
                       <Copy class="h-4 w-4" aria-hidden="true" />

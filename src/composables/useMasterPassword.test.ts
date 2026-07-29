@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { IDBFactory } from "fake-indexeddb";
+import { clearCanary } from "@/lib/api-key-crypto";
 import { __resetForTest, idbGet, STORE_PROFILES } from "@/lib/idb";
 import {
   type ConnectionProfile,
@@ -75,6 +76,63 @@ function newProfile(plain: string, mp: ReturnType<typeof useMasterPassword>) {
 }
 
 describe("useMasterPassword", () => {
+  test("rejects key access before initialization and while a password vault is locked", async () => {
+    const mp = useMasterPassword();
+    expect(useMasterPassword()).toBe(mp);
+
+    await expect(mp.encryptWithDeviceKey("plain")).rejects.toThrow("Device key is not initialized");
+    await expect(mp.encryptApiKey("plain")).rejects.toThrow("call useMasterPassword().initialize");
+    await expect(mp.decryptApiKey({ v: 1, scheme: "device", iv: "", ct: "" })).rejects.toThrow(
+      "Device key is not initialized",
+    );
+
+    mp.isPasswordEnabled.value = true;
+    await expect(mp.encryptApiKey("plain")).rejects.toThrow("unlocked key is not available");
+    await expect(mp.decryptApiKey({ v: 1, scheme: "password", iv: "", ct: "" })).rejects.toThrow(
+      "while locked",
+    );
+  });
+
+  test("device-key encryption stays usable through its dedicated migration path", async () => {
+    const mp = await bootstrap();
+
+    const secret = await mp.encryptWithDeviceKey("legacy-secret");
+
+    expect(secret.scheme).toBe("device");
+    expect(await mp.decryptApiKey(secret)).toBe("legacy-secret");
+  });
+
+  test("unlock reports a missing canary and resets stale exposed state", async () => {
+    const mp = useMasterPassword();
+    mp.isPasswordEnabled.value = true;
+    mp.isUnlocked.value = true;
+
+    expect(await mp.unlock("unused")).toBe(false);
+    expect(mp.isPasswordEnabled.value).toBe(false);
+    expect(mp.isUnlocked.value).toBe(false);
+  });
+
+  test("guards password lifecycle operations in invalid states", async () => {
+    const mp = useMasterPassword();
+
+    await expect(mp.disablePassword("unused")).rejects.toThrow("Password is not enabled");
+    await expect(mp.changePassword("unused", "new")).rejects.toThrow("Password is not enabled");
+    await expect(mp.enablePassword("new")).rejects.toThrow("Device key is not initialized");
+
+    mp.isPasswordEnabled.value = true;
+    await expect(mp.enablePassword("new")).rejects.toThrow("Password is already enabled");
+    await expect(mp.disablePassword("unused")).rejects.toThrow("Device key is not initialized");
+  });
+
+  test("rejects lifecycle changes when enabled-state metadata is missing", async () => {
+    const mp = await bootstrap();
+    mp.isPasswordEnabled.value = true;
+    await clearCanary();
+
+    await expect(mp.disablePassword("unused")).rejects.toThrow("canary metadata is missing");
+    await expect(mp.changePassword("unused", "new")).rejects.toThrow("canary metadata is missing");
+  });
+
   test("initialize: fresh install → device scheme, no password, ready", async () => {
     const mp = await bootstrap();
     expect(mp.isReady.value).toBe(true);
@@ -99,6 +157,9 @@ describe("useMasterPassword", () => {
     await mp.enablePassword("correct horse");
     expect(mp.isPasswordEnabled.value).toBe(true);
     expect(mp.isUnlocked.value).toBe(true);
+    const activeSecret = await mp.encryptApiKey("active-password-secret");
+    expect(activeSecret.scheme).toBe("password");
+    expect(await mp.decryptApiKey(activeSecret)).toBe("active-password-secret");
 
     const stored = (await idbGet(STORE_PROFILES, profile.id)) as ConnectionProfile;
     expect(stored.apiKey.scheme).toBe("password");
@@ -147,6 +208,18 @@ describe("useMasterPassword", () => {
 
     const stored = (await idbGet(STORE_PROFILES, profile.id)) as ConnectionProfile;
     expect(await mp.decryptApiKey(stored.apiKey)).toBe("hs_x");
+  });
+
+  test("change password rejects an incorrect current passphrase without rotating data", async () => {
+    const mp = await bootstrap();
+    const profile = await newProfile("hs_unchanged", mp);
+    await new Promise((r) => setTimeout(r, 20));
+    await mp.enablePassword("right");
+
+    await expect(mp.changePassword("wrong", "new")).rejects.toThrow(/incorrect/i);
+
+    const stored = (await idbGet(STORE_PROFILES, profile.id)) as ConnectionProfile;
+    expect(await mp.decryptApiKey(stored.apiKey)).toBe("hs_unchanged");
   });
 
   test("disable password: rotates back to device, canary cleared", async () => {

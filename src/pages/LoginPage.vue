@@ -663,7 +663,9 @@ onMounted(() => {
             <AlertDialogDescription>
               {{ t("confirmDeleteProfileDescription") }}
               <span v-if="pendingDeleteProfile" class="mt-2 block break-all font-medium text-foreground">
-                {{ pendingDeleteProfile.name }} · {{ pendingDeleteProfile.baseUrl }}
+                <bdi dir="auto">{{ pendingDeleteProfile.name }}</bdi>
+                ·
+                <bdi dir="auto">{{ pendingDeleteProfile.baseUrl }}</bdi>
               </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -686,4 +688,3 @@ onMounted(() => {
 <style scoped>
 /* No scoped styles; styling uses tailwind utility classes. */
 </style>
-

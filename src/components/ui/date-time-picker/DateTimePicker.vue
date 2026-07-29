@@ -29,7 +29,7 @@ const props = withDefaults(
   }>(),
   {
     id: undefined,
-    locale: "en",
+    locale: "en-US",
     placeholder: undefined,
     timeLabel: undefined,
     hourLabel: undefined,
@@ -50,7 +50,7 @@ const selectedDate = ref<DateValue>();
 const calendarPlaceholder = ref<DateValue>();
 const selectedTime = ref("00:00");
 const resolvedTestId = computed(() => props.testId ?? String(attrs["data-testid"] ?? ""));
-const resolvedLocale = computed(() => resolveIntlLocale(props.locale));
+const resolvedLocale = computed(() => props.locale);
 const localizedCopy = computed(() => resolveLocalizedCopy(props.locale));
 const placeholderText = computed(() => props.placeholder ?? localizedCopy.value.placeholder);
 const resolvedTimeLabel = computed(() => props.timeLabel ?? localizedCopy.value.time);
@@ -107,6 +107,24 @@ function resolveLocalizedCopy(locale: string) {
       placeholder: "Choisir la date et l'heure",
       time: "Heure",
     },
+    it: {
+      hour: "Ora",
+      minute: "Minuto",
+      placeholder: "Scegli data e ora",
+      time: "Ora",
+    },
+    ja: {
+      hour: "時",
+      minute: "分",
+      placeholder: "日時を選択",
+      time: "時刻",
+    },
+    ko: {
+      hour: "시",
+      minute: "분",
+      placeholder: "날짜와 시간 선택",
+      time: "시간",
+    },
     ru: {
       hour: "Час",
       minute: "Минута",
@@ -122,10 +140,6 @@ function resolveLocalizedCopy(locale: string) {
   } as const;
 
   return copy[language as keyof typeof copy] ?? copy.en;
-}
-
-function resolveIntlLocale(locale: string) {
-  return locale.split("-")[0] === "ar" ? "ar-EG" : locale;
 }
 
 function parseTime(value: string) {

@@ -11,8 +11,9 @@
     "lint": "bun --bun node_modules/@biomejs/biome/bin/biome check .",
     "format": "bun --bun node_modules/@biomejs/biome/bin/biome format --write .",
     "test": "bun test src",
-    "test:e2e": "bun scripts/check-e2e-button-coverage.ts && bun --bun node_modules/vitest/vitest.mjs --config vitest.e2e.config.ts --run",
-    "check": "bun run lint && bun run test && bun run build && bun run test:e2e"
+    "test:coverage": "bun test scripts/check-unit-coverage.test.ts && bun --config=./bunfig.coverage.toml test --coverage src && bun scripts/check-unit-coverage.ts",
+    "test:e2e": "bun scripts/run-e2e.ts",
+    "check": "bun run lint && bun run test:coverage && bun run build && bun run test:e2e"
   },
   "dependencies": {
     "@internationalized/date": "^3.12.1",

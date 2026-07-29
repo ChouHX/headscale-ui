@@ -110,7 +110,6 @@ const {
   returnAfterInvite: returnToDeviceSetupAfterInvite,
   lastCreatedInvite,
   lastRegisteredNode,
-  authRequestResult,
   pendingRegistrationForm,
 } = useDeviceSetup();
 const router = useRouter();
@@ -258,7 +257,7 @@ const canMoveAddDeviceNext = computed(() => {
     return false;
   }
   if (addDeviceStep.value === "pending") {
-    return Boolean(lastRegisteredNode.value || authRequestResult.value);
+    return Boolean(lastRegisteredNode.value);
   }
   return deviceSetupTask.value !== null;
 });
@@ -266,23 +265,20 @@ const canMoveAddDeviceNext = computed(() => {
 const {
   formatDate,
   userLabel,
+  nodeDisplayName,
   nodeOwner,
   nodeStatusLabel,
   hasVisibleUser,
   isTagManagedDeviceUser,
 } = useDisplayHelpers();
 
-function firstVisibleUserId() {
-  return visibleUsers.value[0]?.id ?? "";
-}
-
 function ensureWorkflowUser() {
-  const fallback = firstVisibleUserId();
-  if (!pendingRegistrationForm.user && fallback) {
-    pendingRegistrationForm.user = fallback;
+  const firstUser = visibleUsers.value[0];
+  if (!pendingRegistrationForm.user && firstUser) {
+    pendingRegistrationForm.user = firstUser.name;
   }
-  if (!inviteForm.user && fallback) {
-    inviteForm.user = fallback;
+  if (!inviteForm.user && firstUser) {
+    inviteForm.user = firstUser.id;
   }
 }
 
@@ -292,7 +288,7 @@ function exportMachines() {
   downloadCsv(
     "headscale-machines.csv",
     filteredNodes.value.map((node) => ({
-      name: node.name,
+      name: nodeDisplayName(node),
       owner: nodeOwner(node),
       status: nodeStatusLabel(node),
       addresses: node.ipAddresses.join(" "),
@@ -343,7 +339,6 @@ function goToPreviousAddDeviceStep() {
     addDeviceStep.value = "type";
     lastCreatedInvite.value = "";
     lastRegisteredNode.value = null;
-    authRequestResult.value = "";
     return;
   }
   addDeviceStep.value = addDeviceSteps.value[addDeviceStepIndex.value - 1]?.id ?? "type";
@@ -369,7 +364,6 @@ function openDeviceSetupDialog() {
   addDeviceStep.value = "type";
   lastCreatedInvite.value = "";
   lastRegisteredNode.value = null;
-  authRequestResult.value = "";
   deviceSetupDialogOpen.value = true;
 }
 
@@ -388,31 +382,20 @@ function prepareDeviceInvite(task: AddDeviceTask) {
   setAuthKeyExpiryDays(7);
   lastCreatedInvite.value = "";
   lastRegisteredNode.value = null;
-  authRequestResult.value = "";
 }
 
 function preparePendingRegistration() {
   clearActionFeedback("register-pending-node");
-  clearActionFeedback("register-auth-request");
-  clearActionFeedback("approve-auth-request");
-  clearActionFeedback("reject-auth-request");
   deviceSetupTask.value = "pending";
   addDeviceStep.value = "pending";
   deviceSetupDialogOpen.value = true;
   ensureWorkflowUser();
   lastCreatedInvite.value = "";
   lastRegisteredNode.value = null;
-  authRequestResult.value = "";
 }
 
 function handleDeviceSetupDialogOpen(open: boolean) {
-  if (
-    !open &&
-    (isActionPending("register-pending-node") ||
-      isActionPending("register-auth-request") ||
-      isActionPending("approve-auth-request") ||
-      isActionPending("reject-auth-request"))
-  ) {
+  if (!open && isActionPending("register-pending-node")) {
     return;
   }
   deviceSetupDialogOpen.value = open;
@@ -422,11 +405,7 @@ function handleDeviceSetupDialogOpen(open: boolean) {
     addDeviceStep.value = "type";
     lastCreatedInvite.value = "";
     lastRegisteredNode.value = null;
-    authRequestResult.value = "";
     clearActionFeedback("register-pending-node");
-    clearActionFeedback("register-auth-request");
-    clearActionFeedback("approve-auth-request");
-    clearActionFeedback("reject-auth-request");
   }
 }
 
@@ -508,7 +487,6 @@ function openAccessFromDeviceSetup() {
 
 async function registerPendingNode() {
   lastRegisteredNode.value = null;
-  authRequestResult.value = "";
   const registered = await mutateWith("register-pending-node", (client) =>
     client.registerNode({
       user: pendingRegistrationForm.user,
@@ -517,41 +495,6 @@ async function registerPendingNode() {
   );
   if (registered.ok) {
     lastRegisteredNode.value = registered.result.node;
-    addDeviceStep.value = "result";
-  }
-}
-
-async function registerAuthRequest() {
-  authRequestResult.value = "";
-  const registered = await mutateWith("register-auth-request", (client) =>
-    client.authRegister({
-      user: pendingRegistrationForm.user,
-      authId: pendingRegistrationForm.authId,
-    }),
-  );
-  if (registered.ok) {
-    lastRegisteredNode.value = registered.result.node;
-    authRequestResult.value = copy.value.registerAuthRequest;
-    addDeviceStep.value = "result";
-  }
-}
-
-async function approveAuthRequest() {
-  const approved = await mutate("approve-auth-request", (client) =>
-    client.authApprove({ authId: pendingRegistrationForm.authId }),
-  );
-  if (approved) {
-    authRequestResult.value = copy.value.approveAuthRequest;
-    addDeviceStep.value = "result";
-  }
-}
-
-async function rejectAuthRequest() {
-  const rejected = await mutate("reject-auth-request", (client) =>
-    client.authReject({ authId: pendingRegistrationForm.authId }),
-  );
-  if (rejected) {
-    authRequestResult.value = copy.value.rejectAuthRequest;
     addDeviceStep.value = "result";
   }
 }
@@ -592,7 +535,7 @@ watch(() => [intent.nodeId.value, intent.search.value], consumeDeviceQuery);
 function openRenameDialog(node: HeadscaleNode) {
   clearActionFeedback("rename-node");
   const token = renameDialogGuard.next();
-  const draftAtOpen = node.givenName || node.name;
+  const draftAtOpen = nodeDisplayName(node);
   selectedRenameNode.value = node;
   renameDrafts[node.id] = draftAtOpen;
   renameDialogOpen.value = true;
@@ -605,7 +548,7 @@ function openRenameDialog(node: HeadscaleNode) {
     }
     selectedRenameNode.value = nextNode;
     if (renameDrafts[node.id] === draftAtOpen) {
-      renameDrafts[node.id] = nextNode.givenName || nextNode.name;
+      renameDrafts[node.id] = nodeDisplayName(nextNode);
     }
   });
 }
@@ -705,7 +648,7 @@ async function renameNode(node: HeadscaleNode) {
   return mutate("rename-node", (client) =>
     client.renameNode({
       nodeId: node.id,
-      newName: renameDrafts[node.id] || node.name,
+      newName: renameDrafts[node.id] || nodeDisplayName(node),
     }),
   );
 }
@@ -865,7 +808,7 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
                 class="grid gap-4"
                 data-testid="pending-registration-flow"
               >
-                <div class="grid gap-4 md:grid-cols-2">
+                <div class="grid gap-4">
                   <section class="grid gap-3 rounded-md border bg-background p-4">
                     <div>
                       <h3 class="text-sm font-semibold">{{ copy.pendingNode }}</h3>
@@ -874,7 +817,7 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
                     <div class="grid gap-2">
                       <Label for="pending-registration-user">{{ copy.inviteOwner }}</Label>
                       <NativeSelect id="pending-registration-user" v-model="pendingRegistrationForm.user" data-testid="pending-registration-user">
-                        <NativeSelectOption v-for="user in visibleUsers" :key="user.id" :value="user.id">
+                        <NativeSelectOption v-for="user in visibleUsers" :key="user.id" :value="user.name">
                           {{ userLabel(user) }}
                         </NativeSelectOption>
                       </NativeSelect>
@@ -903,59 +846,6 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
                     </p>
                   </section>
 
-                  <section class="grid gap-3 rounded-md border bg-background p-4">
-                    <div>
-                      <h3 class="text-sm font-semibold">{{ copy.registrationRequest }}</h3>
-                      <p class="mt-1 text-xs leading-5 text-muted-foreground">{{ copy.registrationRequestDescription }}</p>
-                    </div>
-                    <div class="grid gap-2">
-                      <Label for="auth-request-id">{{ copy.authId }}</Label>
-                      <Input
-                        id="auth-request-id"
-                        v-model="pendingRegistrationForm.authId"
-                        data-testid="auth-request-id"
-                        :placeholder="copy.authIdPlaceholder"
-                      />
-                    </div>
-                    <div class="flex flex-wrap gap-2">
-                      <Button type="button" data-testid="auth-register" :disabled="isActionPending('register-auth-request')" @click="registerAuthRequest">
-                        <LoaderCircle v-if="isActionPending('register-auth-request')" class="h-4 w-4 animate-spin" aria-hidden="true" />
-                        {{ copy.registerAuthRequest }}
-                      </Button>
-                      <Button type="button" variant="outline" data-testid="auth-approve" :disabled="isActionPending('approve-auth-request')" @click="approveAuthRequest">
-                        <LoaderCircle v-if="isActionPending('approve-auth-request')" class="h-4 w-4 animate-spin" aria-hidden="true" />
-                        {{ copy.approveAuthRequest }}
-                      </Button>
-                      <Button type="button" variant="destructive" data-testid="auth-reject" :disabled="isActionPending('reject-auth-request')" @click="rejectAuthRequest">
-                        <LoaderCircle v-if="isActionPending('reject-auth-request')" class="h-4 w-4 animate-spin" aria-hidden="true" />
-                        {{ copy.rejectAuthRequest }}
-                      </Button>
-                    </div>
-                    <p
-                      v-if="actionError('register-auth-request')"
-                      role="alert"
-                      class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                      data-testid="auth-register-error"
-                    >
-                      {{ actionError("register-auth-request") }}
-                    </p>
-                    <p
-                      v-if="actionError('approve-auth-request')"
-                      role="alert"
-                      class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                      data-testid="auth-approve-error"
-                    >
-                      {{ actionError("approve-auth-request") }}
-                    </p>
-                    <p
-                      v-if="actionError('reject-auth-request')"
-                      role="alert"
-                      class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                      data-testid="auth-reject-error"
-                    >
-                      {{ actionError("reject-auth-request") }}
-                    </p>
-                  </section>
                 </div>
               </div>
 
@@ -965,9 +855,8 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
                 data-testid="registration-result"
               >
                 <p v-if="lastRegisteredNode" class="text-sm font-medium">
-                  {{ copy.registeredNode }}: {{ lastRegisteredNode.name }}
+                  {{ copy.registeredNode }}: {{ nodeDisplayName(lastRegisteredNode) }}
                 </p>
-                <p v-if="authRequestResult" class="text-sm text-muted-foreground">{{ authRequestResult }}</p>
               </div>
 
               <div v-else-if="deviceSetupTask" class="grid gap-4" data-testid="device-setup-flow">
@@ -1138,7 +1027,7 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
           <DialogHeader>
             <DialogTitle class="flex min-w-0 items-center gap-2">
               <Network class="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span class="truncate">{{ selectedDetailNode.name }}</span>
+              <span class="truncate">{{ nodeDisplayName(selectedDetailNode) }}</span>
             </DialogTitle>
             <DialogDescription>{{ copy.machineDetails }}</DialogDescription>
           </DialogHeader>
@@ -1323,7 +1212,7 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
           <AlertDialogTitle>{{ copy.expireMachineTitle }}</AlertDialogTitle>
           <AlertDialogDescription>
             {{ copy.expireMachineDescription }}
-            <span class="mt-2 block font-medium text-foreground">{{ selectedExpireNode.name }}</span>
+            <span class="mt-2 block font-medium text-foreground">{{ nodeDisplayName(selectedExpireNode) }}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <p
@@ -1350,7 +1239,7 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
           <AlertDialogTitle>{{ copy.removeMachineTitle }}</AlertDialogTitle>
           <AlertDialogDescription>
             {{ copy.removeMachineDescription }}
-            <span class="mt-2 block font-medium text-foreground">{{ selectedRemoveNode.name }}</span>
+            <span class="mt-2 block font-medium text-foreground">{{ nodeDisplayName(selectedRemoveNode) }}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <p
@@ -1483,7 +1372,7 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
                       :data-testid="`device-detail-link-${node.id}`"
                       @click="openNodeDetails(node)"
                     >
-                      {{ node.name }}
+                      {{ nodeDisplayName(node) }}
                     </button>
                   </div>
                   <div class="mt-2 flex flex-wrap gap-1">
@@ -1514,7 +1403,7 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
                         <Button
                           variant="outline"
                           size="icon"
-                          :aria-label="`${copy.actions}: ${node.name}`"
+                          :aria-label="`${copy.actions}: ${nodeDisplayName(node)}`"
                           :data-testid="`machine-actions-trigger-mobile-${node.id}`"
                         >
                           <EllipsisVertical class="h-4 w-4" aria-hidden="true" />
@@ -1556,13 +1445,13 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
                   <div v-if="hasVisibleUser(node.user)">
                     <button
                       type="button"
-                      class="text-left underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      class="text-start underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       :data-testid="`device-owner-link-${node.id}`"
                       @click="openUserDetailsExternal(node.user)"
                     >
-                      {{ nodeOwner(node) }}
+                      <bdi dir="auto">{{ nodeOwner(node) }}</bdi>
                     </button>
-                    <p class="text-xs text-muted-foreground">{{ node.user.email || node.user.name }}</p>
+                    <p class="text-xs text-muted-foreground"><bdi dir="auto">{{ node.user.email || node.user.name }}</bdi></p>
                   </div>
                   <span v-else aria-hidden="true" class="text-muted-foreground">-</span>
                 </TableCell>
@@ -1570,7 +1459,7 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
                   <button
                     v-if="nodePendingRoutes(node).length"
                     type="button"
-                    class="flex flex-wrap gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    class="flex flex-wrap gap-1 rounded-md text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     :data-testid="`device-pending-routes-${node.id}`"
                     @click="jumpToRoutesForMachine(node)"
                   >
@@ -1582,7 +1471,7 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
                       :class="pendingRouteClass(route)"
                       :data-testid="`device-pending-route-${node.id}-${routeIndex}`"
                     >
-                      {{ route }}
+                      <bdi dir="ltr">{{ route }}</bdi>
                     </Badge>
                   </button>
                   <div
@@ -1621,7 +1510,7 @@ function openUserDetailsExternal(user?: HeadscaleUser) {
                         <Button
                           variant="outline"
                           size="icon"
-                          :aria-label="`${copy.actions}: ${node.name}`"
+                          :aria-label="`${copy.actions}: ${nodeDisplayName(node)}`"
                           :data-testid="`machine-actions-trigger-${node.id}`"
                         >
                           <EllipsisVertical class="h-4 w-4" aria-hidden="true" />

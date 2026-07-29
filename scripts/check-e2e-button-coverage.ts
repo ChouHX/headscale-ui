@@ -3,6 +3,9 @@ import { join } from "node:path";
 import type { ElementNode, RootNode, TemplateChildNode } from "@vue/compiler-dom";
 import { baseParse, ElementTypes, NodeTypes } from "@vue/compiler-dom";
 import { parse as parseSfc } from "@vue/compiler-sfc";
+import { E2E_REQUIREMENTS, type E2ERequirementKind } from "../e2e/requirements";
+import { OPERATION_IDS } from "../src/domain/headscale-operations";
+import { SUPPORTED_LOCALES } from "../src/i18n/locales";
 
 type SourceTarget = {
   file: string;
@@ -30,6 +33,13 @@ const COMPONENT_FILES = collectVueFiles("src/components").filter(
 );
 const SOURCE_FILES = [...collectVueFiles("src/pages"), ...COMPONENT_FILES];
 const E2E_FILE = "e2e/headscale-ui.browser.test.ts";
+const REQUIREMENT_KINDS: readonly E2ERequirementKind[] = [
+  "control",
+  "rest",
+  "journey",
+  "recovery",
+  "locale",
+];
 const FLOW_TAGS = new Set([
   "AlertDialogCancel",
   "Button",
@@ -190,16 +200,156 @@ function collectInteractions(source: string) {
   return interactions;
 }
 
+function duplicates(values: readonly string[]) {
+  const seen = new Set<string>();
+  const duplicateValues = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) duplicateValues.add(value);
+    seen.add(value);
+  }
+  return [...duplicateValues].sort();
+}
+
+function collectTestTitles(source: string) {
+  const runnableMatches = [...source.matchAll(/\btest\(\s*"([^"]+)"/g)];
+  const runnableTitles = runnableMatches.map((match) => match[1] ?? "");
+  const runnable = new Set(runnableTitles);
+  const bodies = new Map<string, string>();
+  for (const [index, match] of runnableMatches.entries()) {
+    const start = match.index ?? 0;
+    const end = runnableMatches[index + 1]?.index ?? source.length;
+    bodies.set(match[1] ?? "", source.slice(start, end));
+  }
+  const blocked = new Set(
+    [...source.matchAll(/\btest\.(?:skip|todo|skipIf|runIf)\b[\s\S]{0,200}?"([^"]+)"/g)].map(
+      (match) => match[1] ?? "",
+    ),
+  );
+  return { runnable, runnableTitles, bodies, blocked };
+}
+
+function compareRequiredValues(
+  label: string,
+  expected: readonly string[],
+  actual: readonly string[],
+) {
+  const expectedSet = new Set(expected);
+  const actualSet = new Set(actual);
+  return [
+    ...expected
+      .filter((value) => !actualSet.has(value))
+      .map((value) => `Missing ${label}: ${value}`),
+    ...actual
+      .filter((value) => !expectedSet.has(value))
+      .map((value) => `Unknown ${label}: ${value}`),
+    ...duplicates(actual).map((value) => `Duplicate ${label}: ${value}`),
+  ];
+}
+
+const e2eSource = await Bun.file(E2E_FILE).text();
 const { targets, missingTestIds } = await collectSourceTargets();
-const interactions = collectInteractions(await Bun.file(E2E_FILE).text());
+const interactions = collectInteractions(e2eSource);
 const missingCoverage = targets.filter(
   (target) =>
     !Array.from(interactions).some((interaction) =>
       patternsOverlap(target.testIdPattern, interaction),
     ),
 );
+const {
+  runnable: runnableTitles,
+  runnableTitles: allRunnableTitles,
+  bodies: runnableBodies,
+  blocked: blockedTitles,
+} = collectTestTitles(e2eSource);
+const mappedTitles = [...new Set(E2E_REQUIREMENTS.map((requirement) => requirement.testTitle))];
+const expectedRestEvidence = (operationId: string, driver: "ui" | "api-contract") =>
+  driver === "ui"
+    ? `expectUiOperationDelta("${operationId}"`
+    : `observeApiContract("${operationId}"`;
+const includesIgnoringWhitespace = (source: string | undefined, value: string) =>
+  source?.replace(/\s+/g, "").includes(value.replace(/\s+/g, "")) ?? false;
+const requirementErrors = [
+  ...duplicates(allRunnableTitles).map((title) => `Duplicate runnable test title: ${title}`),
+  ...duplicates(E2E_REQUIREMENTS.map((requirement) => requirement.id)).map(
+    (id) => `Duplicate requirement id: ${id}`,
+  ),
+  ...E2E_REQUIREMENTS.filter((requirement) => !runnableTitles.has(requirement.testTitle)).map(
+    (requirement) => `Missing runnable test for ${requirement.id}: ${requirement.testTitle}`,
+  ),
+  ...E2E_REQUIREMENTS.filter((requirement) => blockedTitles.has(requirement.testTitle)).map(
+    (requirement) =>
+      `Required test is skipped/todo for ${requirement.id}: ${requirement.testTitle}`,
+  ),
+  ...mappedTitles
+    .filter((title) => {
+      const body = runnableBodies.get(title);
+      return body !== undefined && !/\bexpect(?:\.|\()/.test(body);
+    })
+    .map((title) => `Required test has no runtime assertion: ${title}`),
+  ...E2E_REQUIREMENTS.filter(
+    (requirement) =>
+      requirement.kind === "rest" &&
+      !includesIgnoringWhitespace(runnableBodies.get(requirement.testTitle), requirement.evidence),
+  ).map(
+    (requirement) =>
+      `Missing REST execution evidence for ${requirement.operationId}: ${requirement.evidence}`,
+  ),
+  ...E2E_REQUIREMENTS.filter(
+    (requirement) =>
+      requirement.kind === "rest" &&
+      requirement.evidence !== expectedRestEvidence(requirement.operationId, requirement.driver),
+  ).map(
+    (requirement) =>
+      `Invalid ${requirement.driver} evidence for ${requirement.operationId}: expected ${expectedRestEvidence(requirement.operationId, requirement.driver)}`,
+  ),
+  ...E2E_REQUIREMENTS.filter((requirement) => {
+    if (requirement.kind !== "rest") return false;
+    const body = runnableBodies.get(requirement.testTitle);
+    return (
+      !body?.includes("requiredUiOperationIds") ||
+      !body.includes("observedUiOperationIds") ||
+      !body.includes("requiredApiContractOperationIds") ||
+      !body.includes("observedApiContractOperationIds")
+    );
+  }).map(
+    (requirement) =>
+      `Missing driver-separated runtime reconciliation for ${requirement.operationId}: ${requirement.testTitle}`,
+  ),
+  ...E2E_REQUIREMENTS.filter(
+    (requirement) =>
+      requirement.kind === "rest" &&
+      requirement.driver === "ui" &&
+      requirement.evidence.includes("client."),
+  ).map(
+    (requirement) =>
+      `UI requirement cannot use direct client evidence for ${requirement.operationId}`,
+  ),
+  ...E2E_REQUIREMENTS.filter(
+    (requirement) =>
+      requirement.kind === "locale" &&
+      (!runnableBodies.get(requirement.testTitle)?.includes("loginLocales.add(code)") ||
+        !runnableBodies.get(requirement.testTitle)?.includes("appLocales.add(code)")),
+  ).map(
+    (requirement) =>
+      `Missing login/app locale runtime evidence for ${requirement.locale}: ${requirement.testTitle}`,
+  ),
+  ...compareRequiredValues(
+    "REST operation requirement",
+    OPERATION_IDS,
+    E2E_REQUIREMENTS.filter((requirement) => requirement.kind === "rest").map(
+      (requirement) => requirement.operationId,
+    ),
+  ),
+  ...compareRequiredValues(
+    "locale requirement",
+    SUPPORTED_LOCALES,
+    E2E_REQUIREMENTS.filter((requirement) => requirement.kind === "locale").map(
+      (requirement) => requirement.locale,
+    ),
+  ),
+];
 
-if (missingTestIds.length > 0 || missingCoverage.length > 0) {
+if (missingTestIds.length > 0 || missingCoverage.length > 0 || requirementErrors.length > 0) {
   const lines = [
     "E2E button/flow coverage check failed.",
     "",
@@ -210,6 +360,7 @@ if (missingTestIds.length > 0 || missingCoverage.length > 0) {
       (target) =>
         `Missing interaction: ${target.file}:${target.line} <${target.tag}> ${target.testIdPattern}`,
     ),
+    ...requirementErrors,
   ].filter(Boolean);
 
   console.error(lines.join("\n"));
@@ -217,5 +368,9 @@ if (missingTestIds.length > 0 || missingCoverage.length > 0) {
 }
 
 console.log(
-  `E2E button/flow coverage check passed: ${targets.length} controls covered by ${interactions.size} interactions.`,
+  `E2E control coverage: ${targets.length}/${targets.length} controls mapped by ${interactions.size} interactions.`,
 );
+for (const kind of REQUIREMENT_KINDS) {
+  const required = E2E_REQUIREMENTS.filter((requirement) => requirement.kind === kind).length;
+  console.log(`E2E ${kind} requirements: ${required}/${required} mapped.`);
+}

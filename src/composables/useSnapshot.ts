@@ -7,6 +7,7 @@ import type {
   PreAuthKey,
 } from "@/api/types";
 import { isTimestampExpired } from "@/domain/node-status";
+import { nodeDisplayName } from "@/utils/node";
 import { useActionFeedback } from "./useActionFeedback";
 import { useHeadscaleClient } from "./useHeadscaleClient";
 
@@ -120,7 +121,7 @@ export function useSnapshot(): UseSnapshotReturn {
       // and replace all values in a single reactive flush.
       for (const key of Object.keys(renameDrafts)) delete renameDrafts[key];
       for (const node of patch.nodes) {
-        renameDrafts[node.id] = node.givenName || node.name;
+        renameDrafts[node.id] = nodeDisplayName(node);
       }
     }
     onApplySnapshot?.(snapshot.value);

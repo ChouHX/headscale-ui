@@ -2,6 +2,10 @@ import type { HeadscaleNode } from "@/api/types";
 import { nodeConnectionStatus } from "@/domain/node-status";
 import { hasVisibleUser, userLabel } from "./user";
 
+export function nodeDisplayName(node: HeadscaleNode): string {
+  return node.givenName || node.name;
+}
+
 /** Routes the node has advertised but the admin hasn't approved yet. */
 export function nodePendingRoutes(node: HeadscaleNode): string[] {
   return node.availableRoutes.filter((route) => !node.approvedRoutes.includes(route));

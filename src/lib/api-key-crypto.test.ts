@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { IDBFactory } from "fake-indexeddb";
 import {
   clearCanary,
+  DeviceKeyPersistError,
   decryptApiKey,
   deriveKeyFromPassword,
   encryptApiKey,
@@ -94,6 +95,38 @@ describe("getOrCreateDeviceKey", () => {
     const key = await getOrCreateDeviceKey();
     expect(key.extractable).toBe(false);
     await expect(crypto.subtle.exportKey("raw", key)).rejects.toBeDefined();
+  });
+
+  test("reports a persistence failure without losing its cause", async () => {
+    const cause = new Error("simulated IndexedDB write failure");
+    const descriptor = Object.getOwnPropertyDescriptor(IDBObjectStore.prototype, "put");
+    Object.defineProperty(IDBObjectStore.prototype, "put", {
+      configurable: true,
+      value() {
+        throw cause;
+      },
+    });
+
+    let thrown: unknown;
+    try {
+      await getOrCreateDeviceKey();
+    } catch (error) {
+      thrown = error;
+    } finally {
+      if (descriptor) Object.defineProperty(IDBObjectStore.prototype, "put", descriptor);
+    }
+
+    expect(thrown).toBeInstanceOf(DeviceKeyPersistError);
+    expect((thrown as DeviceKeyPersistError).name).toBe("DeviceKeyPersistError");
+    expect((thrown as DeviceKeyPersistError).message).toBe(
+      "Failed to persist device key to IndexedDB",
+    );
+    expect((thrown as Error & { cause?: unknown }).cause).toBe(cause);
+  });
+
+  test("does not invent a cause when none was supplied", () => {
+    const error = new DeviceKeyPersistError();
+    expect("cause" in error).toBe(false);
   });
 });
 

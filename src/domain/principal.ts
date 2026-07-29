@@ -7,24 +7,29 @@ export function toPrincipal(raw: string): Principal {
 }
 
 export class PrincipalIndex {
-  private readonly known = new Set<Principal>();
+  private readonly known = new Set<string>();
 
   constructor(values: Iterable<string>) {
     for (const v of values) {
-      if (v) this.known.add(toPrincipal(v));
+      const value = v.trim();
+      if (value) this.known.add(value);
     }
   }
 
   static fromUsers(users: readonly HeadscaleUser[]): PrincipalIndex {
     const values: string[] = [];
     for (const user of users) {
-      if (user.email) values.push(user.email);
-      if (user.name) values.push(user.name);
+      const email = user.email?.trim();
+      if (email) values.push(email);
+      const name = user.name.trim();
+      if (name) values.push(name);
+      const providerId = user.providerId?.trim();
+      if (providerId) values.push(providerId);
     }
     return new PrincipalIndex(values);
   }
 
   has(value: string): boolean {
-    return this.known.has(toPrincipal(value));
+    return this.known.has(value.trim().replace(/@$/, ""));
   }
 }

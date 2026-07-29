@@ -8,7 +8,9 @@ import { resetAllSingletons } from "@/composables/__testing";
 import { useHeadscaleClient } from "@/composables/useHeadscaleClient";
 import { masterPasswordTestingHandle, useMasterPassword } from "@/composables/useMasterPassword";
 import { useSnapshot } from "@/composables/useSnapshot";
-import { i18n } from "@/i18n";
+import type { OperationId } from "@/domain/headscale-operations";
+import { i18n, LOCALE_META, SUPPORTED_LOCALES } from "@/i18n";
+import { productCopy } from "@/i18n/product-copy";
 import {
   idbGet,
   idbPut,
@@ -19,7 +21,10 @@ import {
 import { hydrate, profileStorage, profileStorageTestingHandle } from "@/lib/profile-storage";
 import { hydrateSettings, settingsStorageTestingHandle } from "@/lib/settings-storage";
 import { installAuthGuard, routes } from "@/router";
+import { E2E_REQUIREMENTS } from "./requirements";
 import "@/styles/globals.css";
+
+const realHeadscaleApiKey = import.meta.env.VITE_HEADSCALE_E2E_API_KEY;
 
 type StoredProfile = {
   id: string;
@@ -78,8 +83,8 @@ beforeEach(async () => {
   masterPasswordTestingHandle.reset();
   settingsStorageTestingHandle.reset();
   await clearHeadscaleDb();
-  (i18n.global.locale as unknown as { value: string }).value = "en";
-  document.documentElement.lang = "en";
+  (i18n.global.locale as unknown as { value: string }).value = "en-US";
+  document.documentElement.lang = "en-US";
   document.documentElement.dir = "ltr";
   window.__headscaleUiOperationCalls = [];
   resetAllSingletons();
@@ -158,6 +163,25 @@ async function connectWithDefaults() {
   }
   await page.getByTestId("profile-option-Local mock").click();
   await expect.element(page.getByTestId("profile-menu-trigger")).toBeVisible();
+}
+
+async function connectToDockerHeadscale(profileName: string) {
+  if (!realHeadscaleApiKey) {
+    throw new Error("VITE_HEADSCALE_E2E_API_KEY is required for Docker Headscale E2E tests");
+  }
+
+  await page.getByTestId("profile-option-new").click();
+  await page.getByTestId("connect-profile-name").fill(profileName);
+  selectDomTestId("connect-mode", "real");
+  const baseUrl = `${window.location.origin}/__headscale-e2e`;
+  await page.getByTestId("connect-server-url").fill(baseUrl);
+  await page.getByTestId("connect-api-key").fill(realHeadscaleApiKey);
+  await page.getByTestId("connect-submit").click();
+  await expect.element(page.getByTestId(`profile-option-${profileName}`)).toBeVisible();
+  await page.getByTestId(`profile-option-${profileName}`).click();
+  await expect.element(page.getByTestId("section-home")).toBeVisible();
+
+  return { apiKey: realHeadscaleApiKey, baseUrl };
 }
 
 async function openCreateMemberDialog() {
@@ -625,6 +649,25 @@ function operationCount(id: string) {
   return window.__headscaleUiOperationCalls?.filter((call) => call.id === id).length ?? 0;
 }
 
+async function expectUiOperationDelta(
+  operationId: OperationId,
+  countBeforeUiAction: number,
+  observedOperationIds: Set<OperationId>,
+) {
+  await expect.poll(() => operationCount(operationId)).toBeGreaterThan(countBeforeUiAction);
+  observedOperationIds.add(operationId);
+}
+
+async function observeApiContract<T>(
+  operationId: OperationId,
+  observedOperationIds: Set<OperationId>,
+  request: () => Promise<T>,
+) {
+  const response = await request();
+  observedOperationIds.add(operationId);
+  return response;
+}
+
 function lastElementByTestIdPrefix(prefix: string) {
   const elements = Array.from(document.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"]`));
   const element = elements.at(-1);
@@ -704,11 +747,7 @@ async function clickVisibleDomTestId(testId: string) {
 }
 
 function inputDomTestId(testId: string, value: string) {
-  const element = document.querySelector<HTMLInputElement>(`[data-testid="${testId}"]`);
-  expect(element).toBeTruthy();
-  if (!element) {
-    return;
-  }
+  const element = visibleDomTestId(testId) as HTMLInputElement;
   element.value = value;
   element.dispatchEvent(new Event("input", { bubbles: true }));
 }
@@ -1198,8 +1237,8 @@ test("supports language and theme selectors before login", async () => {
   await closeLayerWithEscape("connection-dialog");
 
   await page.getByTestId("locale-select").click();
-  await page.getByTestId("locale-option-zh").click();
-  expect(document.documentElement.lang).toBe("zh");
+  await page.getByTestId("locale-option-zh-Hans").click();
+  expect(document.documentElement.lang).toBe("zh-Hans");
   await page.getByTestId("profile-option-new").click();
   await expect.element(page.getByTestId("connect-submit")).toHaveTextContent("添加");
   await closeLayerWithEscape("connection-dialog");
@@ -1362,8 +1401,8 @@ test("uses pointer cursors for buttons, links, menus and tabs", async () => {
   expectPointerCursor("language-menu-trigger");
   expectVisibleInteractiveElementsUsePointer();
   clickDomTestId("language-menu-trigger");
-  await expect.element(page.getByTestId("locale-option-zh")).toBeVisible();
-  expectPointerCursor("locale-option-zh");
+  await expect.element(page.getByTestId("locale-option-zh-Hans")).toBeVisible();
+  expectPointerCursor("locale-option-zh-Hans");
   expectVisibleInteractiveElementsUsePointer();
   await closeProfileMenu();
 });
@@ -1607,6 +1646,86 @@ test("keeps failed destructive member actions busy and error-visible", async () 
   await expect.element(page.getByTestId("member-alice")).toBeVisible();
 });
 
+test("recovers a failed snapshot refresh without losing the current data", async () => {
+  await renderLogin();
+  await connectWithDefaults();
+
+  const { mockClient } = useHeadscaleClient();
+  const listNodes = mockClient.listNodes.bind(mockClient);
+  let failNextRefresh = true;
+  mockClient.listNodes = async (payload) => {
+    if (failNextRefresh) {
+      failNextRefresh = false;
+      throw new Error("temporary snapshot failure");
+    }
+    return listNodes(payload);
+  };
+
+  try {
+    await expect.element(page.getByTestId("recent-device-status-1")).toBeVisible();
+    await page.getByTestId("refresh-data").click();
+    await expect.poll(() => document.querySelector('[role="alert"]')).toBeTruthy();
+    await expect.element(page.getByTestId("recent-device-status-1")).toBeVisible();
+    await expect
+      .poll(
+        () =>
+          document.querySelector<HTMLButtonElement>('[data-testid="refresh-data"]')?.disabled ??
+          true,
+      )
+      .toBe(false);
+
+    await page.getByTestId("refresh-data").click();
+    await expect.poll(() => document.querySelector('[role="alert"]')).toBeNull();
+    await expect.element(page.getByTestId("recent-device-status-1")).toBeVisible();
+  } finally {
+    mockClient.listNodes = listNodes;
+  }
+});
+
+test("preserves a failed mutation and succeeds when retried", async () => {
+  await renderLogin();
+  await connectWithDefaults();
+
+  await page.getByTestId("section-members").click();
+  await openCreateMemberDialog();
+  await page.getByTestId("member-name").fill("retry-user");
+  await page.getByTestId("create-member").click();
+  await expect.element(page.getByTestId("member-retry-user")).toBeVisible();
+
+  const { mockClient } = useHeadscaleClient();
+  const renameUser = mockClient.renameUser.bind(mockClient);
+  let failNextRename = true;
+  mockClient.renameUser = async (payload) => {
+    if (failNextRename) {
+      failNextRename = false;
+      throw new Error("temporary rename failure");
+    }
+    return renameUser(payload);
+  };
+
+  try {
+    await clickVisibleDomTestId("member-actions-trigger-retry-user");
+    await clickVisibleDomTestId("rename-member-retry-user");
+    await page.getByTestId("rename-member-name").fill("retry-user-renamed");
+    await clickVisibleDomTestId("confirm-rename-member");
+
+    await expect.element(page.getByTestId("rename-member-error")).toBeVisible();
+    await expect.element(page.getByTestId("rename-member-dialog")).toBeVisible();
+    await expect.element(page.getByTestId("member-retry-user")).toBeVisible();
+    expect(
+      document.querySelector<HTMLButtonElement>('[data-testid="confirm-rename-member"]')?.disabled,
+    ).toBe(false);
+
+    await clickVisibleDomTestId("confirm-rename-member");
+    await expect.element(page.getByTestId("member-retry-user-renamed")).toBeVisible();
+    await expect
+      .poll(() => document.querySelector('[data-testid="rename-member-dialog"]'))
+      .toBeNull();
+  } finally {
+    mockClient.renameUser = renameUser;
+  }
+});
+
 test("covers the empty machine state and add-first-device flow", async () => {
   await renderLogin();
   await connectWithDefaults();
@@ -1737,8 +1856,9 @@ test("covers user filters, user export and member deletion", async () => {
   await clickVisibleDomTestId("member-actions-trigger-erin");
   await clickVisibleDomTestId("rename-member-erin");
   await expect.element(page.getByTestId("rename-member-dialog")).toBeVisible();
-  await page.getByTestId("rename-member-name").fill("erin-admin");
-  await page.getByTestId("rename-member-cancel").click();
+  await expect.element(page.getByTestId("rename-member-name")).toBeVisible();
+  inputDomTestId("rename-member-name", "erin-admin");
+  await clickVisibleDomTestId("rename-member-cancel");
   await expect
     .poll(() => document.querySelector('[data-testid="rename-member-dialog"]'))
     .toBeNull();
@@ -1746,13 +1866,14 @@ test("covers user filters, user export and member deletion", async () => {
   await clickVisibleDomTestId("member-actions-trigger-erin");
   await clickVisibleDomTestId("rename-member-erin");
   await expect.element(page.getByTestId("rename-member-dialog")).toBeVisible();
-  await page.getByTestId("rename-member-name").fill("erin-admin");
-  await page.getByTestId("confirm-rename-member").click();
+  await expect.element(page.getByTestId("rename-member-name")).toBeVisible();
+  inputDomTestId("rename-member-name", "erin-admin");
+  await clickVisibleDomTestId("confirm-rename-member");
   await expect.element(page.getByTestId("member-erin-admin")).toBeVisible();
   await clickVisibleDomTestId("member-actions-trigger-erin-admin");
   await clickVisibleDomTestId("delete-member-erin-admin");
   await expect.element(page.getByTestId("delete-member-dialog")).toBeVisible();
-  await page.getByTestId("cancel-delete-member").click();
+  await clickVisibleDomTestId("cancel-delete-member");
   await expect
     .poll(() => document.querySelector('[data-testid="delete-member-dialog"]'))
     .toBeNull();
@@ -1760,8 +1881,8 @@ test("covers user filters, user export and member deletion", async () => {
   await clickVisibleDomTestId("member-actions-trigger-erin-admin");
   await clickVisibleDomTestId("delete-member-erin-admin");
   await expect.element(page.getByTestId("delete-member-dialog")).toBeVisible();
-  await page.getByTestId("confirm-delete-member").click();
-  expect(document.querySelector('[data-testid="member-erin-admin"]')).toBeNull();
+  await clickVisibleDomTestId("confirm-delete-member");
+  await expect.poll(() => document.querySelector('[data-testid="member-erin-admin"]')).toBeNull();
   await openCreateMemberDialog();
   await page.getByTestId("member-name").fill("erin");
   await page.getByTestId("create-member").click();
@@ -1769,8 +1890,8 @@ test("covers user filters, user export and member deletion", async () => {
   await clickVisibleDomTestId("member-actions-trigger-erin");
   await clickVisibleDomTestId("delete-member-erin");
   await expect.element(page.getByTestId("delete-member-dialog")).toBeVisible();
-  await page.getByTestId("confirm-delete-member").click();
-  expect(document.querySelector('[data-testid="member-erin"]')).toBeNull();
+  await clickVisibleDomTestId("confirm-delete-member");
+  await expect.poll(() => document.querySelector('[data-testid="member-erin"]')).toBeNull();
 });
 
 test("covers auth-key filters, expiration and deletion", async () => {
@@ -1945,7 +2066,7 @@ test("renders initial mock policy with team/tag cards and risk banners", async (
   await expect.element(page.getByTestId("tag-card-tag:workstation")).toBeVisible();
 
   await expect.element(page.getByTestId("open-access-banner")).toBeVisible();
-  await expect.element(page.getByTestId("orphan-ref-banner")).toBeVisible();
+  expect(document.querySelector('[data-testid="orphan-ref-banner"]')).toBeNull();
 
   expect(document.querySelector('[data-testid="resource-access-empty"]')).toBeNull();
   expectNoRawPolicyEditor();
@@ -1954,7 +2075,21 @@ test("renders initial mock policy with team/tag cards and risk banners", async (
 test("clean up orphan refs banner: cancel keeps them, confirm strips them", async () => {
   await renderLogin();
   await connectWithDefaults();
+  await resetMockPolicy(
+    JSON.stringify({
+      groups: { "group:ops": ["alice@", "ghost@"] },
+      tagOwners: { "tag:server": ["alice@", "ghost@"] },
+      acls: [
+        {
+          action: "accept",
+          src: ["group:ops", "alice@"],
+          dst: ["tag:server:80", "tag:server:443"],
+        },
+      ],
+    }),
+  );
   await openAccessSection();
+  window.__headscaleUiOperationCalls = [];
 
   await expect.element(page.getByTestId("orphan-ref-banner")).toBeVisible();
   await page.getByTestId("cleanup-orphan-refs").click();
@@ -1968,6 +2103,19 @@ test("clean up orphan refs banner: cancel keeps them, confirm strips them", asyn
   await page.getByTestId("cleanup-orphan-refs").click();
   await page.getByTestId("cleanup-orphans-confirm").click();
   await expect.poll(() => document.querySelector('[data-testid="orphan-ref-banner"]')).toBeNull();
+
+  await page.getByTestId("save-policy").click();
+  await expect
+    .poll(() => window.__headscaleUiOperationCalls?.some((call) => call.id === "policy.set"))
+    .toBe(true);
+
+  const saved = latestSavedPolicy();
+  expect(saved.groups?.["group:ops"]).toEqual(["alice@"]);
+  expect(saved.tagOwners?.["tag:server"]).toEqual(["alice@"]);
+  expect(saved.acls?.flatMap((rule) => rule.dst).sort()).toEqual([
+    "tag:server:443",
+    "tag:server:80",
+  ]);
 });
 
 test("unsaved-changes dialog covers cancel, discard and save-and-close paths", async () => {
@@ -2526,31 +2674,15 @@ test("covers task navigation and the client-device setup branch", async () => {
   await expect.element(page.getByTestId("add-device-options")).toBeVisible();
   await page.getByTestId("add-pending-node").click();
   await expect.element(page.getByTestId("pending-registration-flow")).toBeVisible();
-  await page.getByTestId("pending-registration-user").selectOptions("1");
+  await page.getByTestId("add-device-prev").click();
+  await expect.element(page.getByTestId("add-device-options")).toBeVisible();
+  await page.getByTestId("add-pending-node").click();
+  await expect.element(page.getByTestId("pending-registration-flow")).toBeVisible();
+  await page.getByTestId("pending-registration-user").selectOptions("alice");
   await page.getByTestId("pending-node-key").fill("nodekey:pending-e2e");
   await page.getByTestId("register-pending-node").click();
   await expect
     .poll(() => window.__headscaleUiOperationCalls?.some((call) => call.id === "node.register"))
-    .toBe(true);
-  await expect.element(page.getByTestId("registration-result")).toBeVisible();
-  await page.getByTestId("add-device-prev").click();
-  await expect.element(page.getByTestId("pending-registration-flow")).toBeVisible();
-  await page.getByTestId("auth-request-id").fill("auth-e2e");
-  await page.getByTestId("auth-register").click();
-  await expect
-    .poll(() => window.__headscaleUiOperationCalls?.some((call) => call.id === "auth.register"))
-    .toBe(true);
-  await expect.element(page.getByTestId("registration-result")).toBeVisible();
-  await page.getByTestId("add-device-prev").click();
-  await page.getByTestId("auth-approve").click();
-  await expect
-    .poll(() => window.__headscaleUiOperationCalls?.some((call) => call.id === "auth.approve"))
-    .toBe(true);
-  await expect.element(page.getByTestId("registration-result")).toBeVisible();
-  await page.getByTestId("add-device-prev").click();
-  await page.getByTestId("auth-reject").click();
-  await expect
-    .poll(() => window.__headscaleUiOperationCalls?.some((call) => call.id === "auth.reject"))
     .toBe(true);
   await expect.element(page.getByTestId("registration-result")).toBeVisible();
   await page.getByTestId("add-device-finish").click();
@@ -2771,14 +2903,34 @@ test("keeps every core function usable on mobile", async () => {
   expectNoHorizontalOverflow();
 });
 
-test("defaults to English and supports the United Nations official languages plus Traditional Chinese", async () => {
+test("defaults to English and switches through every supported BCP47 locale", async () => {
   await renderLogin();
+
+  const loginLocales = new Set<string>();
+  for (const code of SUPPORTED_LOCALES) {
+    await page.getByTestId("locale-select").click();
+    await expect.element(page.getByTestId(`locale-option-${code}`)).toBeVisible();
+    await page.getByTestId(`locale-option-${code}`).click();
+    expect(document.documentElement.lang).toBe(code);
+    expect(document.documentElement.dir).toBe(LOCALE_META[code].dir);
+    await expect.poll(() => readIdbSetting("locale")).toBe(code);
+    expect(page.getByTestId("locale-select").element().getAttribute("aria-label")).toContain(
+      LOCALE_META[code].nativeLabel,
+    );
+    loginLocales.add(code);
+  }
+  expect([...loginLocales]).toEqual([...SUPPORTED_LOCALES]);
+
+  await page.getByTestId("locale-select").click();
+  await page.getByTestId("locale-option-en-US").click();
+  await expect.poll(() => readIdbSetting("locale")).toBe("en-US");
   await connectWithDefaults();
 
+  expect(document.documentElement.lang).toBe("en-US");
   await expect.element(page.getByTestId("section-devices")).toBeVisible();
 
-  await chooseProfileMenuOption("locale-option-zh");
-  await expect.element(page.getByTestId("section-devices")).toHaveTextContent("机器");
+  await chooseProfileMenuOption("locale-option-zh-Hans");
+  await expect.element(page.getByTestId("section-devices")).toHaveTextContent("设备");
   await page.getByTestId("section-members").click();
   await expect.element(page.getByTestId("member-devices-header")).toBeVisible();
   expect(document.querySelector('[data-testid="member-devices-header"]')?.textContent?.trim()).toBe(
@@ -2789,34 +2941,70 @@ test("defaults to English and supports the United Nations official languages plu
   expect(document.querySelector('[data-testid="member-tagged-devices"]')).toBeNull();
   await expect.element(page.getByTestId("user-table")).toHaveTextContent("没有匹配筛选条件的用户");
 
-  await chooseProfileMenuOption("locale-option-zh-Hant");
-  expect(document.documentElement.lang).toBe("zh-Hant");
+  await chooseProfileMenuOption("locale-option-zh-Hant-TW");
+  expect(document.documentElement.lang).toBe("zh-Hant-TW");
   expect(document.documentElement.dir).toBe("ltr");
-  await expect.element(page.getByTestId("section-devices")).toHaveTextContent("機器");
+  await expect.element(page.getByTestId("section-devices")).toHaveTextContent("裝置");
   expect(document.querySelector('[data-testid="member-devices-header"]')?.textContent?.trim()).toBe(
     "裝置",
   );
   await expect
     .element(page.getByTestId("user-table"))
-    .toHaveTextContent("沒有匹配篩選條件的使用者");
+    .toHaveTextContent("沒有相符篩選條件的使用者");
+  selectDomTestId("user-filter", "all");
 
-  const refreshLabels = {
-    fr: "Actualiser les données",
-    ru: "Обновить данные",
-    es: "Actualizar datos",
-    ar: "تحديث البيانات",
-  } as const;
-
-  for (const code of ["fr", "ru", "es", "ar"] as const) {
+  const appLocales = new Set<string>();
+  for (const code of SUPPORTED_LOCALES) {
     await chooseProfileMenuOption(`locale-option-${code}`);
     expect(document.documentElement.lang).toBe(code);
-    expect(document.querySelector('[data-testid="refresh-users"]')?.getAttribute("title")).toBe(
-      refreshLabels[code],
-    );
-    expect(
-      document.querySelector('[data-testid="refresh-users"]')?.getAttribute("aria-label"),
-    ).toBe(refreshLabels[code]);
+    expect(document.documentElement.dir).toBe(LOCALE_META[code].dir);
+    await expect.poll(() => readIdbSetting("locale")).toBe(code);
+
+    for (const section of ["home", "devices", "members", "invites", "routes", "access"] as const) {
+      await selectSectionTab(section);
+      await expect
+        .element(page.getByTestId(`section-${section}`))
+        .toHaveTextContent(productCopy[code].nav[section]);
+
+      if (section === "home") {
+        expect(document.querySelector('[data-testid="refresh-data"]')?.getAttribute("title")).toBe(
+          productCopy[code].refreshData,
+        );
+      } else if (section === "devices") {
+        await expect
+          .element(page.getByTestId("add-device-toggle"))
+          .toHaveTextContent(productCopy[code].addDevice);
+      } else if (section === "members") {
+        await expect
+          .element(page.getByTestId("open-create-member"))
+          .toHaveTextContent(productCopy[code].addMember);
+      } else if (section === "invites") {
+        await expect
+          .element(page.getByTestId("open-create-invite"))
+          .toHaveTextContent(productCopy[code].createInvite);
+      } else if (section === "routes") {
+        await expect
+          .element(page.getByTestId("approve-routes-2"))
+          .toHaveTextContent(productCopy[code].approveAll);
+      } else {
+        await expect
+          .element(page.getByTestId("save-policy"))
+          .toHaveTextContent(productCopy[code].savePolicy);
+      }
+    }
+
+    await selectSectionTab("members");
+    await openCreateMemberDialog();
+    await expect
+      .element(page.getByTestId("member-create-dialog"))
+      .toHaveTextContent(productCopy[code].createMember);
+    await page.getByTestId("cancel-create-member").click();
+    await expect
+      .poll(() => document.querySelector('[data-testid="member-create-dialog"]'))
+      .toBeNull();
+    appLocales.add(code);
   }
+  expect([...appLocales]).toEqual([...SUPPORTED_LOCALES]);
 
   await expect.element(page.getByTestId("section-devices")).toHaveTextContent("الأجهزة");
   expect(document.documentElement.dir).toBe("rtl");
@@ -2827,7 +3015,7 @@ test("defaults to English and supports the United Nations official languages plu
   await page.getByTestId("invite-expiration").click();
   await expect.element(page.getByTestId("invite-expiration-time-label")).toHaveTextContent("الوقت");
 
-  const arabicHour = new Intl.NumberFormat("ar-EG", {
+  const arabicHour = new Intl.NumberFormat("ar", {
     minimumIntegerDigits: 2,
     useGrouping: false,
   }).format(7);
@@ -2837,7 +3025,7 @@ test("defaults to English and supports the United Nations official languages plu
   expect(hourSelect?.getAttribute("aria-label")).toBe("الساعة");
   expect(hourSelect?.selectedOptions[0]?.textContent?.trim()).toBe(arabicHour);
   expectNoHorizontalOverflow();
-});
+}, 120_000);
 
 test("adapts every main page and shared controls for Arabic RTL", async () => {
   await renderLogin();
@@ -2877,9 +3065,21 @@ test("adapts every main page and shared controls for Arabic RTL", async () => {
   await selectSectionTab("devices");
   await expect.element(page.getByTestId("machines-workbench")).toBeVisible();
   await expect.element(page.getByTestId("machine-list")).toBeVisible();
+  const deviceCell = document.querySelector<HTMLElement>('[data-testid="machine-list"] td');
+  expect(deviceCell).toBeTruthy();
+  expectTextAlignsToStart(deviceCell as HTMLElement);
+  expect(
+    document.querySelector('[data-testid^="device-owner-link-"] bdi')?.getAttribute("dir"),
+  ).toBe("auto");
+  expect(
+    document.querySelector('[data-testid^="device-pending-route-"] bdi')?.getAttribute("dir"),
+  ).toBe("ltr");
   expectNativeSelectIconMirrorsInlineEnd("machine-filter");
   await page.getByTestId("device-detail-link-1").click();
   await expect.element(page.getByTestId("device-detail-dialog")).toBeVisible();
+  await expect
+    .element(page.getByTestId("device-detail-dialog").getByRole("button", { name: "إغلاق" }))
+    .toBeVisible();
   expectDialogMirrorsInlineEnd("device-detail-dialog");
   await closeLayerWithEscape("device-detail-dialog");
   await page.getByTestId("add-device-toggle").click();
@@ -2908,6 +3108,9 @@ test("adapts every main page and shared controls for Arabic RTL", async () => {
 
   await selectSectionTab("invites");
   await expect.element(page.getByTestId("invite-table")).toBeVisible();
+  expect(document.querySelector('[data-testid="invite-table"] code')?.getAttribute("dir")).toBe(
+    "ltr",
+  );
   expectNativeSelectIconMirrorsInlineEnd("invite-filter");
   await page.getByTestId("open-create-invite").click();
   await expect.element(page.getByTestId("invite-create-dialog")).toBeVisible();
@@ -3026,4 +3229,431 @@ test("uses a Tailscale-style add device setup dialog", async () => {
 
   await page.getByTestId("add-device-finish").click();
   await expectMachinesWorkbench();
+});
+
+test("exercises every Headscale v0.28.0 REST operation with deterministic readback", async () => {
+  await renderLogin();
+  window.__headscaleUiOperationCalls = [];
+  await connectToDockerHeadscale("Docker REST lifecycle");
+
+  const requiredUiOperationIds = E2E_REQUIREMENTS.flatMap((requirement) =>
+    requirement.kind === "rest" && requirement.driver === "ui" ? [requirement.operationId] : [],
+  );
+  const requiredApiContractOperationIds = E2E_REQUIREMENTS.flatMap((requirement) =>
+    requirement.kind === "rest" && requirement.driver === "api-contract"
+      ? [requirement.operationId]
+      : [],
+  );
+  const observedUiOperationIds = new Set<OperationId>();
+  const observedApiContractOperationIds = new Set<OperationId>();
+
+  await expectUiOperationDelta("health.check", 0, observedUiOperationIds);
+  await expectUiOperationDelta("version.get", 0, observedUiOperationIds);
+  await expectUiOperationDelta("user.list", 0, observedUiOperationIds);
+  await expectUiOperationDelta("node.list", 0, observedUiOperationIds);
+  await expectUiOperationDelta("policy.get", 0, observedUiOperationIds);
+  await expectUiOperationDelta("apikey.list", 0, observedUiOperationIds);
+
+  const client = useHeadscaleClient().createClient();
+  const health = await client.health();
+  expect(health.databaseConnectivity).toBe(true);
+  const version = await client.version();
+  expect(version.version).toBe("v0.28.0");
+
+  await selectSectionTab("members");
+  await openCreateMemberDialog();
+  await page.getByTestId("member-name").fill("e2e-user");
+  await page.getByTestId("member-display").fill("E2E User");
+  await page.getByTestId("member-email").fill("operator@example.test");
+  const userCreatesBeforeCreate = operationCount("user.create");
+  await page.getByTestId("create-member").click();
+  await expect.element(page.getByTestId("member-e2e-user")).toBeVisible();
+  await expectUiOperationDelta("user.create", userCreatesBeforeCreate, observedUiOperationIds);
+
+  const createdUsers = await client.listUsers({ name: "e2e-user" });
+  expect(createdUsers.users).toHaveLength(1);
+  const lifecycleUser = createdUsers.users[0];
+  expect(lifecycleUser?.displayName).toBe("E2E User");
+  expect(lifecycleUser?.email).toBe("operator@example.test");
+  expect(lifecycleUser?.id).toBeTruthy();
+
+  await clickVisibleDomTestId("member-actions-trigger-e2e-user");
+  await clickVisibleDomTestId("rename-member-e2e-user");
+  await expect.element(page.getByTestId("rename-member-dialog")).toBeVisible();
+  inputDomTestId("rename-member-name", "e2e-user-renamed");
+  const userRenamesBeforeRename = operationCount("user.rename");
+  await clickVisibleDomTestId("confirm-rename-member");
+  await expect.element(page.getByTestId("member-e2e-user-renamed")).toBeVisible();
+  await expectUiOperationDelta("user.rename", userRenamesBeforeRename, observedUiOperationIds);
+  const renamedUsers = await client.listUsers({ id: lifecycleUser?.id ?? "" });
+  expect(renamedUsers.users[0]?.name).toBe("e2e-user-renamed");
+
+  const preAuthKeyListsBeforeInvites = operationCount("preauthkey.list");
+  await selectSectionTab("invites");
+  await expectUiOperationDelta(
+    "preauthkey.list",
+    preAuthKeyListsBeforeInvites,
+    observedUiOperationIds,
+  );
+  const preAuthKeyIdsBefore = new Set(
+    (await client.listPreAuthKeys()).preAuthKeys.map((key) => key.id),
+  );
+  const userListsBeforeInviteDialog = operationCount("user.list");
+  await page.getByTestId("open-create-invite").click();
+  await expect.element(page.getByTestId("invite-create-dialog")).toBeVisible();
+  await expect.poll(() => operationCount("user.list")).toBeGreaterThan(userListsBeforeInviteDialog);
+  await expect.poll(() => useSnapshot().refreshSnapshotInFlight.value).toBe(0);
+  await page.getByTestId("invite-user").selectOptions(lifecycleUser?.id ?? "");
+  await expect.element(page.getByTestId("invite-user")).toHaveValue(lifecycleUser?.id ?? "");
+  await page.getByTestId("invite-tags").fill("");
+  const preAuthKeyCreatesBeforeCreate = operationCount("preauthkey.create");
+  await page.getByTestId("create-invite").click();
+  await expect.element(page.getByTestId("created-invite")).toBeVisible();
+  await expectUiOperationDelta(
+    "preauthkey.create",
+    preAuthKeyCreatesBeforeCreate,
+    observedUiOperationIds,
+  );
+
+  const createdPreAuthKeys = (await client.listPreAuthKeys()).preAuthKeys.filter(
+    (key) => !preAuthKeyIdsBefore.has(key.id),
+  );
+  expect(createdPreAuthKeys).toHaveLength(1);
+  const lifecyclePreAuthKey = createdPreAuthKeys[0];
+  expect(lifecyclePreAuthKey?.user?.id).toBe(lifecycleUser?.id);
+  expect(lifecyclePreAuthKey?.aclTags).toEqual([]);
+  await expect.element(page.getByTestId(`invite-${lifecyclePreAuthKey?.id}`)).toBeVisible();
+
+  await clickVisibleDomTestId(`invite-actions-trigger-${lifecyclePreAuthKey?.id}`);
+  await clickVisibleDomTestId(`expire-invite-${lifecyclePreAuthKey?.id}`);
+  await expect.element(page.getByTestId("expire-invite-dialog")).toBeVisible();
+  const preAuthKeyExpiresBeforeExpire = operationCount("preauthkey.expire");
+  await clickVisibleDomTestId("confirm-invite-action");
+  await expectUiOperationDelta(
+    "preauthkey.expire",
+    preAuthKeyExpiresBeforeExpire,
+    observedUiOperationIds,
+  );
+  await expect
+    .poll(async () => {
+      const key = (await client.listPreAuthKeys()).preAuthKeys.find(
+        (candidate) => candidate.id === lifecyclePreAuthKey?.id,
+      );
+      return Boolean(key?.expiration && Date.parse(key.expiration) <= Date.now() + 5_000);
+    })
+    .toBe(true);
+  await expect
+    .poll(() => document.querySelector('[data-testid="expire-invite-dialog"]'))
+    .toBeNull();
+  await expect.poll(() => useSnapshot().refreshSnapshotInFlight.value).toBe(0);
+
+  await clickVisibleDomTestId(`invite-actions-trigger-${lifecyclePreAuthKey?.id}`);
+  await clickVisibleDomTestId(`delete-invite-${lifecyclePreAuthKey?.id}`);
+  await expect.element(page.getByTestId("delete-invite-dialog")).toBeVisible();
+  const preAuthKeyDeletesBeforeDelete = operationCount("preauthkey.delete");
+  await clickVisibleDomTestId("confirm-invite-action");
+  await expectUiOperationDelta(
+    "preauthkey.delete",
+    preAuthKeyDeletesBeforeDelete,
+    observedUiOperationIds,
+  );
+  await expect
+    .poll(async () =>
+      (await client.listPreAuthKeys()).preAuthKeys.some(
+        (candidate) => candidate.id === lifecyclePreAuthKey?.id,
+      ),
+    )
+    .toBe(false);
+
+  await selectSectionTab("members");
+  await clickVisibleDomTestId("member-actions-trigger-e2e-user-renamed");
+  await clickVisibleDomTestId("delete-member-e2e-user-renamed");
+  await expect.element(page.getByTestId("delete-member-dialog")).toBeVisible();
+  const userDeletesBeforeDelete = operationCount("user.delete");
+  await clickVisibleDomTestId("confirm-delete-member");
+  await expectUiOperationDelta("user.delete", userDeletesBeforeDelete, observedUiOperationIds);
+  await expect
+    .poll(async () => (await client.listUsers({ id: lifecycleUser?.id ?? "" })).users.length)
+    .toBe(0);
+  await expect.poll(() => useSnapshot().refreshSnapshotInFlight.value).toBe(0);
+  await expect
+    .poll(() => document.querySelector('[data-testid="member-e2e-user-renamed"]'))
+    .toBeNull();
+
+  const adminUser = (await client.listUsers({ name: "admin-test" })).users[0];
+  expect(adminUser?.name).toBe("admin-test");
+  const registrationKey = "abcdefghijklmnopqrstuvwx";
+  const debugNode = await observeApiContract(
+    "node.debugCreate",
+    observedApiContractOperationIds,
+    () =>
+      client.debugCreateNode({
+        user: "admin-test",
+        key: registrationKey,
+        name: "e2e-router",
+        routes: ["10.99.0.0/24"],
+      }),
+  );
+  expect(debugNode.node.name).toBe("e2e-router");
+
+  await selectSectionTab("devices");
+  await page.getByTestId("add-device-toggle").click();
+  await page.getByTestId("add-pending-node").click();
+  await expect.element(page.getByTestId("pending-registration-flow")).toBeVisible();
+  await page.getByTestId("pending-registration-user").selectOptions("admin-test");
+  await page.getByTestId("pending-node-key").fill(registrationKey);
+  const nodeRegistrationsBeforeRegister = operationCount("node.register");
+  await page.getByTestId("register-pending-node").click();
+  await expect.element(page.getByTestId("registration-result")).toHaveTextContent("e2e-router");
+  await expectUiOperationDelta(
+    "node.register",
+    nodeRegistrationsBeforeRegister,
+    observedUiOperationIds,
+  );
+  await page.getByTestId("add-device-finish").click();
+
+  const registeredNodes = (await client.listNodes({ user: adminUser?.name ?? "" })).nodes.filter(
+    (node) => node.name === "e2e-router" || node.givenName === "e2e-router",
+  );
+  expect(registeredNodes).toHaveLength(1);
+  const lifecycleNode = registeredNodes[0];
+  expect(lifecycleNode?.availableRoutes).toContain("10.99.0.0/24");
+  const nodeReadback = await observeApiContract("node.get", observedApiContractOperationIds, () =>
+    client.getNode({ nodeId: lifecycleNode?.id ?? "" }),
+  );
+  expect(nodeReadback.node.id).toBe(lifecycleNode?.id);
+  await expect.element(page.getByTestId(`device-${lifecycleNode?.id}`)).toBeVisible();
+
+  await clickVisibleDomTestId(`machine-actions-trigger-${lifecycleNode?.id}`);
+  await clickVisibleDomTestId(`rename-node-action-${lifecycleNode?.id}`);
+  await expect.element(page.getByTestId("rename-node-dialog")).toBeVisible();
+  inputDomTestId("rename-node-dialog-input", "e2e-router-main");
+  const nodeRenamesBeforeRename = operationCount("node.rename");
+  await clickVisibleDomTestId("rename-node-confirm");
+  await expectUiOperationDelta("node.rename", nodeRenamesBeforeRename, observedUiOperationIds);
+  await expect
+    .poll(async () => (await client.getNode({ nodeId: lifecycleNode?.id ?? "" })).node.givenName)
+    .toBe("e2e-router-main");
+  await expect.poll(() => document.querySelector('[data-testid="rename-node-dialog"]')).toBeNull();
+  await expect.poll(() => useSnapshot().refreshSnapshotInFlight.value).toBe(0);
+  await expect
+    .poll(() =>
+      document
+        .querySelector(`[data-testid="device-${lifecycleNode?.id}"]`)
+        ?.textContent?.includes("e2e-router-main"),
+    )
+    .toBe(true);
+
+  await clickVisibleDomTestId(`machine-actions-trigger-${lifecycleNode?.id}`);
+  await clickVisibleDomTestId(`edit-node-tags-action-${lifecycleNode?.id}`);
+  await expect.element(page.getByTestId("node-tags-dialog")).toBeVisible();
+  inputDomTestId("node-tags-input", "tag:test-01");
+  const nodeSetTagsBeforeSave = operationCount("node.setTags");
+  await clickVisibleDomTestId("node-tags-confirm");
+  await expectUiOperationDelta("node.setTags", nodeSetTagsBeforeSave, observedUiOperationIds);
+  await expect
+    .poll(async () => (await client.getNode({ nodeId: lifecycleNode?.id ?? "" })).node.tags)
+    .toEqual(["tag:test-01"]);
+  await expect.poll(() => document.querySelector('[data-testid="node-tags-dialog"]')).toBeNull();
+
+  await selectSectionTab("routes");
+  await expect.element(page.getByTestId(`route-node-${lifecycleNode?.id}`)).toBeVisible();
+  await page.getByTestId(`approve-routes-${lifecycleNode?.id}`).click();
+  await expect
+    .element(page.getByTestId("approve-routes-dialog"))
+    .toHaveTextContent("e2e-router-main");
+  const routeApprovalsBeforeApprove = operationCount("node.setApprovedRoutes");
+  await clickVisibleDomTestId("approve-routes-confirm");
+  await expectUiOperationDelta(
+    "node.setApprovedRoutes",
+    routeApprovalsBeforeApprove,
+    observedUiOperationIds,
+  );
+  await expect
+    .poll(
+      async () => (await client.getNode({ nodeId: lifecycleNode?.id ?? "" })).node.approvedRoutes,
+    )
+    .toContain("10.99.0.0/24");
+  await expect
+    .poll(() => document.querySelector('[data-testid="approve-routes-dialog"]'))
+    .toBeNull();
+
+  await openAccessSection();
+  const policySetsBeforeSave = operationCount("policy.set");
+  await page.getByTestId("save-policy").click();
+  await expectUiOperationDelta("policy.set", policySetsBeforeSave, observedUiOperationIds);
+  const persistedPolicy = await client.getPolicy();
+  expect(JSON.parse(persistedPolicy.policy).groups["group:test-01"]).toContain("admin-test@");
+
+  const apiKeyIdsBefore = new Set((await client.listApiKeys()).apiKeys.map((key) => key.id));
+  await openProfileMenu();
+  await page.getByTestId("open-server-settings").click();
+  await page.getByTestId("server-tab-api-keys").click();
+  const apiKeyCreatesBeforeCreate = operationCount("apikey.create");
+  await page.getByTestId("create-api-key-confirm").click();
+  await expect.element(page.getByTestId("created-api-key")).toBeVisible();
+  await expectUiOperationDelta("apikey.create", apiKeyCreatesBeforeCreate, observedUiOperationIds);
+
+  let lifecycleApiKey:
+    | Awaited<ReturnType<typeof client.listApiKeys>>["apiKeys"][number]
+    | undefined;
+  await expect
+    .poll(async () => {
+      lifecycleApiKey = (await client.listApiKeys()).apiKeys.find(
+        (key) => !apiKeyIdsBefore.has(key.id),
+      );
+      return Boolean(lifecycleApiKey);
+    })
+    .toBe(true);
+  expect(lifecycleApiKey?.prefix).toBeTruthy();
+
+  await clickVisibleDomTestId(`api-key-actions-trigger-${lifecycleApiKey?.prefix}`);
+  await clickVisibleDomTestId(`expire-api-key-${lifecycleApiKey?.prefix}`);
+  await expect.element(page.getByTestId("expire-api-key-dialog")).toBeVisible();
+  const apiKeyExpiresBeforeExpire = operationCount("apikey.expire");
+  await clickVisibleDomTestId("confirm-api-key-action");
+  await expectUiOperationDelta("apikey.expire", apiKeyExpiresBeforeExpire, observedUiOperationIds);
+  await expect
+    .poll(async () => {
+      const key = (await client.listApiKeys()).apiKeys.find(
+        (candidate) => candidate.id === lifecycleApiKey?.id,
+      );
+      return Boolean(key?.expiration && Date.parse(key.expiration) <= Date.now() + 5_000);
+    })
+    .toBe(true);
+  await expect
+    .poll(() => document.querySelector('[data-testid="expire-api-key-dialog"]'))
+    .toBeNull();
+  await expect.poll(() => useSnapshot().refreshSnapshotInFlight.value).toBe(0);
+
+  await clickVisibleDomTestId(`api-key-actions-trigger-${lifecycleApiKey?.prefix}`);
+  await clickVisibleDomTestId(`delete-api-key-${lifecycleApiKey?.prefix}`);
+  await expect.element(page.getByTestId("delete-api-key-dialog")).toBeVisible();
+  const apiKeyDeletesBeforeDelete = operationCount("apikey.delete");
+  await clickVisibleDomTestId("confirm-api-key-action");
+  await expectUiOperationDelta("apikey.delete", apiKeyDeletesBeforeDelete, observedUiOperationIds);
+  await expect
+    .poll(async () =>
+      (await client.listApiKeys()).apiKeys.some(
+        (candidate) => candidate.id === lifecycleApiKey?.id,
+      ),
+    )
+    .toBe(false);
+
+  await page.getByTestId("server-tab-maintenance").click();
+  await page.getByTestId("open-backfill-node-ips").click();
+  await expect.element(page.getByTestId("backfill-node-ips-dialog")).toBeVisible();
+  await page.getByTestId("backfill-node-ips-confirmed").click();
+  const nodeBackfillsBeforeBackfill = operationCount("node.backfillIps");
+  await clickVisibleDomTestId("confirm-backfill-node-ips");
+  await expect.element(page.getByTestId("backfill-node-ips-result")).toBeVisible();
+  await expectUiOperationDelta(
+    "node.backfillIps",
+    nodeBackfillsBeforeBackfill,
+    observedUiOperationIds,
+  );
+  await closeLayerWithEscape("server-settings-dialog");
+
+  await selectSectionTab("devices");
+  await clickVisibleDomTestId(`machine-actions-trigger-${lifecycleNode?.id}`);
+  await clickVisibleDomTestId(`expire-node-action-${lifecycleNode?.id}`);
+  await expect.element(page.getByTestId("expire-node-dialog")).toHaveTextContent("e2e-router-main");
+  const nodeExpiresBeforeExpire = operationCount("node.expire");
+  await clickVisibleDomTestId("expire-node-confirm");
+  await expectUiOperationDelta("node.expire", nodeExpiresBeforeExpire, observedUiOperationIds);
+  await expect
+    .poll(async () =>
+      Boolean((await client.getNode({ nodeId: lifecycleNode?.id ?? "" })).node.expiry),
+    )
+    .toBe(true);
+  await expect.poll(() => document.querySelector('[data-testid="expire-node-dialog"]')).toBeNull();
+  await expect.poll(() => useSnapshot().refreshSnapshotInFlight.value).toBe(0);
+
+  await clickVisibleDomTestId(`machine-actions-trigger-${lifecycleNode?.id}`);
+  await clickVisibleDomTestId(`remove-node-action-${lifecycleNode?.id}`);
+  await expect.element(page.getByTestId("remove-node-dialog")).toHaveTextContent("e2e-router-main");
+  const nodeDeletesBeforeDelete = operationCount("node.delete");
+  await clickVisibleDomTestId("remove-node-confirm");
+  await expectUiOperationDelta("node.delete", nodeDeletesBeforeDelete, observedUiOperationIds);
+  await expect
+    .poll(async () =>
+      (await client.listNodes({})).nodes.some((node) => node.id === lifecycleNode?.id),
+    )
+    .toBe(false);
+  await expect.poll(() => useSnapshot().refreshSnapshotInFlight.value).toBe(0);
+  await expect
+    .poll(() => document.querySelector(`[data-testid="device-${lifecycleNode?.id}"]`))
+    .toBeNull();
+
+  expect(
+    requiredUiOperationIds.filter((operationId) => !observedUiOperationIds.has(operationId)),
+  ).toEqual([]);
+  expect(
+    requiredApiContractOperationIds.filter(
+      (operationId) => !observedApiContractOperationIds.has(operationId),
+    ),
+  ).toEqual([]);
+  expect(requiredUiOperationIds).toHaveLength(24);
+  expect(requiredApiContractOperationIds).toHaveLength(2);
+  expect(requiredUiOperationIds.length + requiredApiContractOperationIds.length).toBe(26);
+}, 120_000);
+
+test("cleans only true orphan references against Headscale v0.28.0", async () => {
+  await renderLogin();
+  const { apiKey, baseUrl } = await connectToDockerHeadscale("Docker orphan cleanup");
+  await openAccessSection();
+  window.__headscaleUiOperationCalls = [];
+
+  await expect.element(page.getByTestId("orphan-ref-banner")).toBeVisible();
+  await page.getByTestId("team-card-group:test-01").click();
+  await expect.element(page.getByTestId("team-member-row-admin-test@")).toBeVisible();
+  await expect.element(page.getByTestId("team-member-row-deleted-test@")).toBeVisible();
+  const validRow = document.querySelector<HTMLElement>(
+    '[data-testid="team-member-row-admin-test@"]',
+  );
+  const orphanRow = document.querySelector<HTMLElement>(
+    '[data-testid="team-member-row-deleted-test@"]',
+  );
+  expect(validRow).toBeTruthy();
+  expect(orphanRow).toBeTruthy();
+  expect(validRow?.querySelector("[title]")).toBeNull();
+  expect(orphanRow?.querySelector("[title]")?.getAttribute("title")).toBe(
+    productCopy["en-US"].orphanReferenceTooltip,
+  );
+  await page.getByTestId("team-detail-close").click();
+
+  await page.getByTestId("cleanup-orphan-refs").click();
+  await page.getByTestId("cleanup-orphans-confirm").click();
+  await page.getByTestId("save-policy").click();
+  await expect
+    .poll(() => window.__headscaleUiOperationCalls?.some((call) => call.id === "policy.set"))
+    .toBe(true);
+
+  const submitted = latestSavedPolicy();
+  expect(submitted.groups?.["group:test-01"]).toEqual(["admin-test@"]);
+  expect(submitted.tagOwners?.["tag:test-01"]).toEqual(["admin-test@"]);
+  expect(submitted.acls?.flatMap((rule) => rule.dst).sort()).toEqual([
+    "tag:test-01:80",
+    "tag:test-02:22",
+  ]);
+
+  await expect
+    .poll(async () => {
+      const response = await fetch(`${baseUrl}/api/v1/policy`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const body = (await response.json()) as { policy: string };
+      return response.ok && !body.policy.includes("deleted-test@");
+    })
+    .toBe(true);
+
+  const response = await fetch(`${baseUrl}/api/v1/policy`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  expect(response.ok).toBe(true);
+  const body = (await response.json()) as { policy: string };
+  const persisted = JSON.parse(body.policy);
+  expect(persisted.groups["group:test-01"]).toEqual(["admin-test@"]);
+  expect(persisted.tagOwners["tag:test-01"]).toEqual(["admin-test@"]);
+  expect(body.policy).not.toContain("deleted-test@");
 });

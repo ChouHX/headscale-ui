@@ -92,21 +92,22 @@ function listToText(value: unknown): string {
   return "";
 }
 
-function destinationParts(value: unknown): { destination: string; ports: string } {
+function destinationParts(value: unknown): Array<{ destination: string; ports: string }> {
   const destinations = Array.isArray(value)
     ? value.map(String)
     : typeof value === "string"
       ? [value]
       : ["*:*"];
-  const first = destinations[0] ?? "*:*";
-  const separator = first.lastIndexOf(":");
-  if (separator <= 0) {
-    return { destination: first, ports: "*" };
-  }
-  return {
-    destination: first.slice(0, separator),
-    ports: first.slice(separator + 1) || "*",
-  };
+  return (destinations.length > 0 ? destinations : ["*:*"]).map((destination) => {
+    const separator = destination.lastIndexOf(":");
+    if (separator <= 0) {
+      return { destination, ports: "*" };
+    }
+    return {
+      destination: destination.slice(0, separator),
+      ports: destination.slice(separator + 1) || "*",
+    };
+  });
 }
 
 export function parseCommaList(value: string): string[] {
@@ -181,20 +182,19 @@ export function parsePolicy(raw: string): PolicyDesignerState {
   const { acls, groups, tagOwners, ...extras } = root;
 
   const rules: PolicyRule[] = Array.isArray(acls)
-    ? acls.map((rule) => {
+    ? acls.flatMap((rule) => {
         const node = (rule && typeof rule === "object" ? rule : {}) as {
           action?: unknown;
           src?: unknown;
           dst?: unknown;
         };
-        const dst = destinationParts(node.dst);
-        return {
+        return destinationParts(node.dst).map((dst) => ({
           id: createPolicyId(),
           action: "accept" as const,
           source: listToText(node.src) || "*",
           destination: dst.destination || "*",
           ports: dst.ports || "*",
-        };
+        }));
       })
     : [];
 

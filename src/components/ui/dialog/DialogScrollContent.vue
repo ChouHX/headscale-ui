@@ -10,6 +10,7 @@ import {
   useForwardPropsEmits,
 } from "reka-ui";
 import type { HTMLAttributes } from "vue";
+import { useHeadscaleI18n } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 defineOptions({
@@ -18,6 +19,7 @@ defineOptions({
 
 const props = defineProps<DialogContentProps & { class?: HTMLAttributes["class"] }>();
 const emits = defineEmits<DialogContentEmits>();
+const { t } = useHeadscaleI18n();
 
 const delegatedProps = reactiveOmit(props, "class");
 
@@ -52,7 +54,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
           class="absolute top-4 end-4 cursor-pointer rounded-md p-0.5 transition-colors hover:bg-secondary"
         >
           <X class="w-4 h-4" />
-          <span class="sr-only">Close</span>
+          <span class="sr-only">{{ t("close") }}</span>
         </DialogClose>
       </DialogContent>
     </DialogOverlay>

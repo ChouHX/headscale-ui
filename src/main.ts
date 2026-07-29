@@ -19,9 +19,6 @@ async function bootstrap() {
     encryptLegacy: (plain) => mp.encryptWithDeviceKey(plain),
   });
   applyStoredLocale();
-  if (import.meta.env.DEV) {
-    void import("./i18n/missing-translations").then((m) => m.reportMissingTranslations());
-  }
   console.info("[headscale-ui] bootstrap: ready");
   createApp(App).use(i18n).use(router).mount("#app");
 }

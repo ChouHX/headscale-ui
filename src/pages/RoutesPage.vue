@@ -47,7 +47,7 @@ const selectedRoutesApprovalHasExitRoute = computed(() =>
   selectedRoutesApprovalPending.value.some((route) => isExitRoute(route)),
 );
 
-const { userLabel, nodeOwner, hasVisibleUser } = useDisplayHelpers();
+const { userLabel, nodeDisplayName, nodeOwner, hasVisibleUser } = useDisplayHelpers();
 
 function approvedRoutesWith(node: HeadscaleNode, route: string) {
   return Array.from(new Set([...node.approvedRoutes, route]));
@@ -56,7 +56,7 @@ function approvedRoutesWith(node: HeadscaleNode, route: string) {
 const { mutate } = useMutation();
 
 function jumpToMachine(node: HeadscaleNode) {
-  void router.push({ name: "devices", query: { search: node.name } }).catch(() => {});
+  void router.push({ name: "devices", query: { search: nodeDisplayName(node) } }).catch(() => {});
 }
 
 function jumpToUser(user?: HeadscaleUser) {
@@ -186,10 +186,10 @@ async function confirmApproveRoute() {
                   type="button"
                   class="inline-flex max-w-full items-center text-start underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   :data-testid="`route-machine-link-${node.id}`"
-                  :aria-label="`${copy.viewMachine}: ${node.name}`"
+                  :aria-label="`${copy.viewMachine}: ${nodeDisplayName(node)}`"
                   @click="jumpToMachine(node)"
                 >
-                  <span class="truncate">{{ node.name }}</span>
+                  <span class="truncate">{{ nodeDisplayName(node) }}</span>
                 </button>
               </h2>
               <button
@@ -313,7 +313,7 @@ async function confirmApproveRoute() {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div class="rounded-md border bg-muted/30 px-3 py-2 text-sm">
-          <div class="text-muted-foreground">{{ selectedRouteApproval.node.name }}</div>
+          <div class="text-muted-foreground">{{ nodeDisplayName(selectedRouteApproval.node) }}</div>
           <div class="mt-1 break-all font-medium" data-testid="approve-route-target">
             {{ selectedRouteApproval.route }}
           </div>
@@ -353,7 +353,7 @@ async function confirmApproveRoute() {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div class="grid gap-2 rounded-md border bg-muted/30 p-3">
-          <p class="text-sm font-medium">{{ selectedRoutesApprovalNode.name }}</p>
+          <p class="text-sm font-medium">{{ nodeDisplayName(selectedRoutesApprovalNode) }}</p>
           <Badge
             v-for="(route, routeIndex) in selectedRoutesApprovalPending"
             :key="route"

@@ -152,6 +152,7 @@ const isCreatingInvite = computed(() => isActionPending("create-invite"));
 const {
   formatDate,
   userLabel,
+  nodeDisplayName,
   nodeStatusLabel,
   shortSecret,
   hasVisibleUser,
@@ -862,7 +863,7 @@ function openNodeDetailsFromDialog(node: HeadscaleNode) {
                     @click="openNodeDetailsFromTable(node)"
                   >
                     <Badge variant="outline" :class="nodeStatusClass(node)" class="cursor-pointer">
-                      {{ node.name }}
+                      {{ nodeDisplayName(node) }}
                     </Badge>
                   </button>
                 </div>
@@ -1016,7 +1017,7 @@ function openNodeDetailsFromDialog(node: HeadscaleNode) {
                   @click="openNodeDetailsFromDialog(node)"
                 >
                   <span class="flex flex-wrap items-center gap-2">
-                    <span class="font-medium">{{ node.name }}</span>
+                    <span class="font-medium">{{ nodeDisplayName(node) }}</span>
                     <Badge variant="outline" :class="nodeStatusClass(node)">{{ nodeStatusLabel(node) }}</Badge>
                   </span>
                   <span class="flex flex-wrap gap-1">

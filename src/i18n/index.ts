@@ -2,7 +2,13 @@ import { computed } from "vue";
 import { createI18n, useI18n as useVueI18n } from "vue-i18n";
 import type { OperationGroup, OperationId } from "@/domain/headscale-operations";
 import { readSetting, writeSetting } from "@/lib/settings-storage";
-import { DEFAULT_LOCALE, isLocale, LOCALE_META, type Locale, SUPPORTED_LOCALES } from "./locales";
+import {
+  DEFAULT_LOCALE,
+  LOCALE_META,
+  type Locale,
+  resolveLocale,
+  SUPPORTED_LOCALES,
+} from "./locales";
 import { commonMessages, getGroupLabel, getOperationMessage, type MessageKey } from "./messages";
 
 const LOCALE_SETTING_KEY = "locale";
@@ -11,7 +17,7 @@ export const i18n = createI18n<[Record<MessageKey, string>], Locale>({
   legacy: false,
   globalInjection: false,
   locale: DEFAULT_LOCALE,
-  fallbackLocale: DEFAULT_LOCALE,
+  fallbackLocale: false,
   messages: commonMessages,
 });
 
@@ -28,8 +34,7 @@ function syncDocument(locale: Locale) {
  * by main.ts once hydrateSettings() has resolved, before the app mounts.
  */
 export function applyStoredLocale(): void {
-  const saved = readSetting(LOCALE_SETTING_KEY);
-  const next = saved && isLocale(saved) ? saved : DEFAULT_LOCALE;
+  const next = resolveLocale(readSetting(LOCALE_SETTING_KEY));
   // With legacy: false the global is a Composer where locale is a
   // WritableComputedRef<Locale>; vue-i18n's union typing forces a narrow cast.
   (i18n.global.locale as unknown as { value: Locale }).value = next;

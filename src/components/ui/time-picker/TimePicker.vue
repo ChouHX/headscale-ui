@@ -21,7 +21,7 @@ const props = withDefaults(
   {
     modelValue: "00:00",
     disabled: false,
-    locale: "en",
+    locale: "en-US",
     hourLabel: "Hour",
     minuteLabel: "Minute",
     testIdPrefix: undefined,

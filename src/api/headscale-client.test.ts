@@ -84,12 +84,6 @@ function responseFor(path: string) {
   if (path === "/api/v1/debug/node") {
     return { node: { ...node, id: "2", name: "debug-router" } };
   }
-  if (path === "/api/v1/auth/register") {
-    return { node: { ...node, id: "4", name: "auth-registered" } };
-  }
-  if (path === "/api/v1/auth/approve" || path === "/api/v1/auth/reject") {
-    return {};
-  }
   if (path === "/api/v1/apikey") {
     return { apiKeys: [{ id: "1", prefix: "ak_live_demo" }], apiKey: "ak_live_demo.secret" };
   }
@@ -145,9 +139,9 @@ describe("RestHeadscaleClient", () => {
   test("sends the expected Headscale REST calls for every client method", async () => {
     const api = client();
 
-    await api.health();
-    await api.version();
-    await api.listUsers({ id: "1", name: "alice", email: "alice@example.com" });
+    const health = await api.health();
+    const version = await api.version();
+    const users = await api.listUsers({ id: "1", name: "alice", email: "alice@example.com" });
     await api.createUser({
       name: "dana",
       displayName: "Dana",
@@ -156,7 +150,7 @@ describe("RestHeadscaleClient", () => {
     });
     await api.renameUser({ id: "1", newName: "alice-admin" });
     await api.deleteUser({ id: "3" });
-    await api.listPreAuthKeys();
+    const preAuthKeys = await api.listPreAuthKeys();
     await api.createPreAuthKey({
       user: "1",
       reusable: true,
@@ -166,14 +160,11 @@ describe("RestHeadscaleClient", () => {
     });
     await api.expirePreAuthKey({ id: "1" });
     await api.deletePreAuthKey({ id: "2" });
-    await api.listNodes({ user: "alice" });
-    await api.getNode({ nodeId: "1" });
-    await api.registerNode({ user: "1", key: "nodekey:pending-demo" });
-    await api.authRegister({ user: "1", authId: "auth-demo" });
-    await api.authApprove({ authId: "auth-demo" });
-    await api.authReject({ authId: "auth-denied" });
+    const nodes = await api.listNodes({ user: "alice" });
+    const node = await api.getNode({ nodeId: "1" });
+    await api.registerNode({ user: "alice", key: "nodekey:pending-demo" });
     await api.debugCreateNode({
-      user: "1",
+      user: "alice",
       key: "nodekey:debug",
       name: "debug-router",
       routes: "10.10.0.0/16",
@@ -188,14 +179,54 @@ describe("RestHeadscaleClient", () => {
     await api.setTags({ nodeId: "1", tags: "tag:server,tag:router" });
     await api.setApprovedRoutes({ nodeId: "2", routes: "10.42.0.0/16,0.0.0.0/0,::/0" });
     await api.backfillNodeIps({ confirmed: true });
-    await api.listApiKeys();
+    const apiKeys = await api.listApiKeys();
     await api.createApiKey({ expiration: "2026-12-31T23:59:00Z" });
     await api.expireApiKey({ prefix: "ak_live_demo", id: "1" });
+    await api.expireApiKey({ id: "2" });
     await api.deleteApiKey({ prefix: "ak_old_demo", id: "2" });
-    await api.getPolicy();
+    await expect(api.expireApiKey({})).rejects.toThrow("API key prefix or ID is required");
+    await expect(api.deleteApiKey({ id: "2" })).rejects.toThrow("API key prefix is required");
+    const policy = await api.getPolicy();
     await api.setPolicy({ policy: '{"acls":[]}' });
 
+    expect(health.databaseConnectivity).toBe(true);
+    expect(version.version).toBe("0.28.0");
+    expect(users.users[0]?.name).toBe("alice");
+    expect(preAuthKeys.preAuthKeys).toEqual([]);
+    expect(nodes.nodes[0]?.name).toBe("alice-laptop");
+    expect(node.node.id).toBe("1");
+    expect(apiKeys.apiKeys[0]?.prefix).toBe("ak_live_demo");
+    expect(policy.policy).toBe('{"acls":[]}');
     expect(seenRequests.every((request) => request.token === "Bearer test-token")).toBe(true);
+    expect(seenRequests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+      "GET /api/v1/health",
+      "GET /version",
+      "GET /api/v1/user",
+      "POST /api/v1/user",
+      "POST /api/v1/user/1/rename/alice-admin",
+      "DELETE /api/v1/user/3",
+      "GET /api/v1/preauthkey",
+      "POST /api/v1/preauthkey",
+      "POST /api/v1/preauthkey/expire",
+      "DELETE /api/v1/preauthkey",
+      "GET /api/v1/node",
+      "GET /api/v1/node/1",
+      "POST /api/v1/node/register",
+      "POST /api/v1/debug/node",
+      "POST /api/v1/node/1/rename/alice-main",
+      "POST /api/v1/node/2/expire",
+      "DELETE /api/v1/node/3",
+      "POST /api/v1/node/1/tags",
+      "POST /api/v1/node/2/approve_routes",
+      "POST /api/v1/node/backfillips",
+      "GET /api/v1/apikey",
+      "POST /api/v1/apikey",
+      "POST /api/v1/apikey/expire",
+      "POST /api/v1/apikey/expire",
+      "DELETE /api/v1/apikey/ak_old_demo",
+      "GET /api/v1/policy",
+      "PUT /api/v1/policy",
+    ]);
     expect(seen("/api/v1/health", "GET")).toBeTruthy();
     expect(seen("/version", "GET")).toBeTruthy();
     expect(seen("/api/v1/user", "GET")?.query).toEqual({
@@ -211,6 +242,7 @@ describe("RestHeadscaleClient", () => {
     });
     expect(seen("/api/v1/user/1/rename/alice-admin", "POST")).toBeTruthy();
     expect(seen("/api/v1/user/3", "DELETE")).toBeTruthy();
+    expect(seen("/api/v1/preauthkey", "GET")?.query).toEqual({});
     expect(seen("/api/v1/preauthkey", "POST")?.body).toEqual({
       aclTags: ["tag:server", "tag:router"],
       ephemeral: false,
@@ -221,25 +253,16 @@ describe("RestHeadscaleClient", () => {
     expect(seen("/api/v1/preauthkey/expire", "POST")?.body).toEqual({ id: "1" });
     expect(seen("/api/v1/preauthkey", "DELETE")?.query).toEqual({ id: "2" });
     expect(seen("/api/v1/node", "GET")?.query).toEqual({ user: "alice" });
+    expect(seen("/api/v1/node/1", "GET")?.query).toEqual({});
     expect(seen("/api/v1/node/register", "POST")?.query).toEqual({
       key: "nodekey:pending-demo",
-      user: "1",
-    });
-    expect(seen("/api/v1/auth/register", "POST")?.body).toEqual({
-      authId: "auth-demo",
-      user: "1",
-    });
-    expect(seen("/api/v1/auth/approve", "POST")?.body).toEqual({
-      authId: "auth-demo",
-    });
-    expect(seen("/api/v1/auth/reject", "POST")?.body).toEqual({
-      authId: "auth-denied",
+      user: "alice",
     });
     expect(seen("/api/v1/debug/node", "POST")?.body).toEqual({
       key: "nodekey:debug",
       name: "debug-router",
       routes: ["10.10.0.0/16"],
-      user: "1",
+      user: "alice",
     });
     expect(seen("/api/v1/node/1/rename/alice-main", "POST")).toBeTruthy();
     expect(seen("/api/v1/node/2/expire", "POST")?.query).toEqual({
@@ -254,14 +277,17 @@ describe("RestHeadscaleClient", () => {
       routes: ["10.42.0.0/16", "0.0.0.0/0", "::/0"],
     });
     expect(seen("/api/v1/node/backfillips", "POST")?.query).toEqual({ confirmed: "true" });
+    expect(seen("/api/v1/apikey", "GET")?.query).toEqual({});
     expect(seen("/api/v1/apikey", "POST")?.body).toEqual({
       expiration: "2026-12-31T23:59:00Z",
     });
-    expect(seen("/api/v1/apikey/expire", "POST")?.body).toEqual({
-      id: "1",
-      prefix: "ak_live_demo",
-    });
-    expect(seen("/api/v1/apikey/ak_old_demo", "DELETE")?.query).toEqual({ id: "2" });
+    expect(
+      seenRequests
+        .filter((request) => request.path === "/api/v1/apikey/expire")
+        .map((request) => request.body),
+    ).toEqual([{ prefix: "ak_live_demo" }, { id: "2" }]);
+    expect(seen("/api/v1/apikey/ak_old_demo", "DELETE")?.query).toEqual({});
+    expect(seen("/api/v1/policy", "GET")?.query).toEqual({});
     expect(seen("/api/v1/policy", "PUT")?.body).toEqual({ policy: '{"acls":[]}' });
   });
 });

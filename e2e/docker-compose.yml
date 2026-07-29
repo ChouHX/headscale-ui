@@ -1,0 +1,19 @@
+services:
+  headscale:
+    image: headscale/headscale:0.28.0
+    command: serve
+    ports:
+      - "127.0.0.1::8080"
+    volumes:
+      - ./headscale-config.yaml:/etc/headscale/config.yaml:ro
+      - ./headscale-derp.yaml:/etc/headscale/derp.yaml:ro
+      - ./headscale-policy.hujson:/fixtures/policy.hujson:ro
+      - headscale-data:/var/lib/headscale
+    healthcheck:
+      test: ["CMD", "headscale", "health"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  headscale-data:

@@ -14,10 +14,12 @@ import {
   parseCommaList,
   parseMemberList,
   parsePolicy,
+  removeGroupById,
   removeMemberFromGroup,
   removeOwnerFromTag,
   removeReferencesToValues,
   removeRuleById,
+  removeTagOwnerById,
   serializePolicy,
   toMemberRef,
   upsertGroup,
@@ -257,6 +259,39 @@ describe("parsePolicy / serializePolicy round-trip", () => {
     expect(out.hosts).toEqual({ "internal-host": "100.64.5.1" });
   });
 
+  test("preserves all source, destination, and port combinations for mixed-port dst arrays", () => {
+    const state = parsePolicy(
+      JSON.stringify({
+        acls: [
+          {
+            action: "accept",
+            src: ["group:ops", "alice@"],
+            dst: ["tag:web:80", "tag:ssh:22"],
+          },
+        ],
+        hosts: { internal: "100.64.0.1" },
+      }),
+    );
+
+    expect(serializePolicy(state)).toEqual({
+      groups: {},
+      tagOwners: {},
+      acls: [
+        {
+          action: "accept",
+          src: ["group:ops", "alice@"],
+          dst: ["tag:web:80"],
+        },
+        {
+          action: "accept",
+          src: ["group:ops", "alice@"],
+          dst: ["tag:ssh:22"],
+        },
+      ],
+      hosts: { internal: "100.64.0.1" },
+    });
+  });
+
   test("invalid JSON returns empty state with default rule", () => {
     const state = parsePolicy("not-valid-json-{");
     expect(state.groups).toEqual([]);
@@ -284,6 +319,47 @@ describe("parsePolicy / serializePolicy round-trip", () => {
     );
     expect(state.rules[0]?.destination).toBe("10.0.0.1");
     expect(state.rules[0]?.ports).toBe("*");
+  });
+
+  test("normalizes malformed ACL containers and scalar fields", () => {
+    const state = parsePolicy(
+      JSON.stringify({
+        acls: [{ src: "group:testers", dst: "tag:service:443" }, { src: 42, dst: [] }, null],
+        groups: [],
+        tagOwners: "invalid",
+      }),
+    );
+
+    expect(
+      state.rules.map(({ source, destination, ports }) => ({ source, destination, ports })),
+    ).toEqual([
+      { source: "group:testers", destination: "tag:service", ports: "443" },
+      { source: "*", destination: "*", ports: "*" },
+      { source: "*", destination: "*", ports: "*" },
+    ]);
+    expect(state.groups).toEqual([]);
+    expect(state.tagOwners).toEqual([]);
+  });
+
+  test("serializes blank rule fields with wildcard defaults", () => {
+    const state = emptyState();
+    state.rules = [{ ...state.rules[0], source: "", destination: "", ports: "  " }];
+
+    expect(serializePolicy(state).acls).toEqual([{ action: "accept", src: [], dst: ["*:*"] }]);
+  });
+
+  test("allocates deterministic fallback IDs when Web Crypto is unavailable", () => {
+    const originalCrypto = globalThis.crypto;
+    Object.defineProperty(globalThis, "crypto", { configurable: true, value: undefined });
+    try {
+      const first = createGroup("group:first").id;
+      const second = createTagOwner("tag:second").id;
+      expect(first).toStartWith("policy-");
+      expect(second).toStartWith("policy-");
+      expect(second).not.toBe(first);
+    } finally {
+      Object.defineProperty(globalThis, "crypto", { configurable: true, value: originalCrypto });
+    }
   });
 });
 
@@ -386,6 +462,38 @@ describe("mutators", () => {
     const t2 = createTagOwner("tag:y");
     expect(t1.id).not.toBe(t2.id);
   });
+
+  test("non-matching mutators preserve sibling containers", () => {
+    const group = createGroup("group:testers", [toMemberRef("user@example.test")]);
+    const tagOwner = createTagOwner("tag:service", [toMemberRef("group:testers")]);
+    let state = upsertGroup(emptyState(), group);
+    state = upsertTagOwner(state, tagOwner);
+
+    const memberResult = removeMemberFromGroup(state, "missing-group", "user@example.test");
+    const addOwnerResult = addOwnerToTag(state, "missing-tag", toMemberRef("other@example.test"));
+    const ownerResult = removeOwnerFromTag(state, "missing-tag", "group:testers");
+
+    expect(memberResult.groups[0]).toBe(state.groups[0]);
+    expect(addOwnerResult.tagOwners[0]).toBe(state.tagOwners[0]);
+    expect(ownerResult.tagOwners[0]).toBe(state.tagOwners[0]);
+  });
+
+  test("removes groups and tag owners by ID without touching siblings", () => {
+    const keepGroup = createGroup("group:keep");
+    const removeGroup = createGroup("group:remove");
+    const keepTag = createTagOwner("tag:keep");
+    const removeTag = createTagOwner("tag:remove");
+    let state = upsertGroup(emptyState(), keepGroup);
+    state = upsertGroup(state, removeGroup);
+    state = upsertTagOwner(state, keepTag);
+    state = upsertTagOwner(state, removeTag);
+
+    state = removeGroupById(state, removeGroup.id);
+    state = removeTagOwnerById(state, removeTag.id);
+
+    expect(state.groups).toEqual([keepGroup]);
+    expect(state.tagOwners).toEqual([keepTag]);
+  });
 });
 
 describe("references", () => {
@@ -454,6 +562,24 @@ describe("findOrphanReferences", () => {
     expect(orphans[0]?.kind).toBe("tag-owner");
   });
 
+  test("reports every stale reference kind in groups and tag owners", () => {
+    let state = emptyState();
+    state = upsertGroup(state, createGroup("group:testers", [toMemberRef("group:missing")]));
+    state = upsertTagOwner(
+      state,
+      createTagOwner("tag:service", [
+        toMemberRef("missing@example.test"),
+        toMemberRef("missing-user"),
+      ]),
+    );
+
+    expect(findOrphanReferences(state, new PrincipalIndex([])).map((item) => item.kind)).toEqual([
+      "group-member",
+      "tag-owner",
+      "tag-owner",
+    ]);
+  });
+
   test("ignores raw entries (autogroup, CIDR, wildcards)", () => {
     let state = emptyState();
     state = upsertGroup(
@@ -476,10 +602,10 @@ describe("findOrphanReferences", () => {
     expect(findOrphanReferences(state, new PrincipalIndex(["alice@example.com"]))).toEqual([]);
   });
 
-  test("ignores case and whitespace differences between principals and known users", () => {
+  test("flags case differences between principals and known users", () => {
     let state = emptyState();
     state = upsertGroup(state, createGroup("group:ops", [toMemberRef("  Alice@Example.COM  ")]));
-    expect(findOrphanReferences(state, new PrincipalIndex(["alice@example.com"]))).toEqual([]);
+    expect(findOrphanReferences(state, new PrincipalIndex(["alice@example.com"]))).toHaveLength(1);
   });
 
   test("flags bare username (no @) when not in known principals", () => {
