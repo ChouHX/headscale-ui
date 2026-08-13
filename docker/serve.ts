@@ -1,4 +1,5 @@
-const DIST = new URL("../dist/", import.meta.url);
+const DIST = new URL("./dist/", import.meta.url);
+const INDEX = new URL("index.html", DIST);
 const PORT = Number(process.env.PORT ?? 8080);
 const HOST = process.env.HOST ?? "0.0.0.0";
 
@@ -9,6 +10,10 @@ function resolveSafe(pathname: string): URL | null {
     return null;
   }
   return target;
+}
+
+if (!(await Bun.file(INDEX).exists())) {
+  throw new Error(`Static assets not found at ${INDEX.pathname}`);
 }
 
 Bun.serve({
@@ -26,7 +31,7 @@ Bun.serve({
       return new Response(file);
     }
 
-    return new Response(Bun.file(new URL("index.html", DIST)));
+    return new Response(Bun.file(INDEX));
   },
 });
 
