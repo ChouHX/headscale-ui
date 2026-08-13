@@ -70,7 +70,31 @@ development, tests, builds, and deployment commands.
 
 ## Deployment
 
-The app is a static SPA and can be deployed to Cloudflare Pages.
+The app is a static SPA. Connect it to a Headscale server from the browser after
+the UI is up: create a `Real` profile, enter the Headscale URL and an API key.
+
+### Docker
+
+Build and run the production image with Compose:
+
+```bash
+docker compose up --build -d
+```
+
+The UI is then available at `http://localhost:8080`. Change the published port
+in `docker-compose.yml` if `8080` is already in use.
+
+To build the image without Compose:
+
+```bash
+docker build -t headscale-ui:local .
+docker run --rm -p 8080:8080 headscale-ui:local
+```
+
+The image is a multi-stage build: Bun compiles the SPA, then a small Bun
+server hosts `dist` and falls back to `index.html` for Vue Router.
+
+### Cloudflare Pages
 
 Recommended Cloudflare Pages settings:
 
