@@ -6,6 +6,13 @@ export interface ConnectionSettings {
   apiKey: string;
 }
 
+export function explainHeadscaleError(message: string): string {
+  if (/reading policy from path\s+["']{2}:\s*open\s*:\s*no such file or directory/i.test(message)) {
+    return "Headscale ACL policy is misconfigured: policy.path is empty. Set policy.mode to database in the Headscale config, then restart Headscale.";
+  }
+  return message;
+}
+
 export function createHeadscaleHttp(settings: ConnectionSettings): AxiosInstance {
   const client = axios.create({
     baseURL: settings.baseUrl.replace(/\/$/, ""),
@@ -27,7 +34,7 @@ export function createHeadscaleHttp(settings: ConnectionSettings): AxiosInstance
         error.response?.data?.message ??
         error.message ??
         "Headscale request failed. Check server URL and API key.";
-      return Promise.reject(new Error(message));
+      return Promise.reject(new Error(explainHeadscaleError(message)));
     },
   );
 

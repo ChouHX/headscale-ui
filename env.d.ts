@@ -15,3 +15,7 @@ interface Window {
     payload: unknown;
   }>;
 }
+
+interface ImportMetaEnv {
+  readonly BASE_URL: string;
+}

@@ -94,6 +94,55 @@ docker run --rm -p 8080:8080 headscale-ui:local
 The image is a multi-stage build: Bun compiles the SPA, then a small Bun
 server hosts `dist` and falls back to `index.html` for Vue Router.
 
+### Reverse proxy under a subpath
+
+Set `VITE_BASE_PATH` at build time when the UI is published below a path such
+as `/admin/`. The value is compiled into asset URLs and Vue Router, so changing
+it requires rebuilding the image:
+
+```bash
+UI_PORT=8081 VITE_BASE_PATH=/admin/ docker compose up --build -d
+```
+
+The container accepts both preserved and stripped proxy prefixes. This Nginx
+example keeps Headscale at the origin root and publishes the UI at `/admin/`:
+
+```nginx
+location = /admin {
+    return 301 /admin/;
+}
+
+location /admin/ {
+    proxy_pass http://127.0.0.1:8081;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+Create the UI profile with the origin URL (for example,
+`https://remote.example.com`), not the `/admin/` URL. Browser API requests then
+go to Headscale through the root proxy and remain same-origin.
+
+The access-policy editor uses Headscale's REST policy endpoints. Configure
+Headscale to store policy in its database:
+
+```yaml
+policy:
+  mode: database
+```
+
+An error such as `reading policy from path "": open : no such file or directory`
+means Headscale is using file policy mode without a `policy.path`; it is not a
+missing file in the UI container. Restart Headscale after changing the config.
+
 ### Cloudflare Pages
 
 Recommended Cloudflare Pages settings:

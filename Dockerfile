@@ -1,7 +1,12 @@
 # syntax=docker/dockerfile:1
 
+ARG VITE_BASE_PATH=/
+
 FROM oven/bun:1.3.14-alpine AS build
 WORKDIR /app
+
+ARG VITE_BASE_PATH
+ENV VITE_BASE_PATH=${VITE_BASE_PATH}
 
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
@@ -15,11 +20,14 @@ RUN bun run build
 FROM oven/bun:1.3.14-alpine AS runtime
 WORKDIR /app
 
+ARG VITE_BASE_PATH
+
 COPY --from=build /app/dist ./dist
 COPY docker/serve.ts ./serve.ts
 
 ENV HOST=0.0.0.0
 ENV PORT=8080
+ENV BASE_PATH=${VITE_BASE_PATH}
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
